@@ -17,18 +17,11 @@ You'll need to install Python 2 somehow from https://www.python.org/downloads/
 ## Development
 Basic log documentation is at [log_structure.md](log_structure.md).
 
-If you want to debug the script and contribute, it's helpful to be able to run the tests.
-These currently look at a suite of log files and just run the parser to look for errors.
-
-### Setup
-  `$ python setup.py develop`
-
-### Testing
-  `$ python test.py <directory of log files>`
-
 ## Authors
 Originally developed at https://github.com/KimBurgess/zero-log-parser
+this ist a Fork of https://github.com/zero-motorcycle-community/zero-log-parser
 
 * **Kim Burgess** - *Initial Work, Inactive* - [@KimBurgess](https://github.com/KimBurgess/)
 * **Brian Rice** - *Maintainer* - [@BrianTRice](https://github.com/BrianTRice/)
 * **Keith Thomas** - *Contributor* - [@keithxemi](https://github.com/keithxemi)
+
