@@ -202,7 +202,8 @@ zero-log-parser/
 │   └── py.typed                  # Type checking marker
 ├── pyproject.toml               # Modern Python packaging (PEP 621)
 ├── README.md                    # This file
-└── requirements.txt             # Development dependencies
+├── requirements.txt             # Development dependencies
+└── zero_log_parser.py           # Actual (standalone) parser
 ```
 
 ## Log File Formats
