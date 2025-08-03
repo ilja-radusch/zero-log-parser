@@ -17,3 +17,5 @@
 *.tsv
 
 .DS_Store
+
+__pycache__
