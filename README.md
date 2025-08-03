@@ -190,22 +190,6 @@ cd zero-log-parser
 pip install -e ".[dev]"
 ```
 
-### Code Quality Tools
-
-```bash
-# Format code
-black src/ tests/
-
-# Lint code  
-ruff check src/ tests/
-
-# Type checking
-mypy src/
-
-# Run tests
-pytest
-```
-
 ### Project Structure
 
 ```
@@ -214,11 +198,8 @@ zero-log-parser/
 │   ├── __init__.py               # Package exports
 │   ├── cli.py                    # Command line interface
 │   ├── core.py                   # Main parsing logic
-│   ├── parser.py                 # Binary parsing classes
-│   ├── message_parser.py         # Message improvement logic
 │   ├── utils.py                  # Utility functions
 │   └── py.typed                  # Type checking marker
-├── tests/                        # Test suite
 ├── pyproject.toml               # Modern Python packaging (PEP 621)
 ├── README.md                    # This file
 └── requirements.txt             # Development dependencies
@@ -253,7 +234,7 @@ For detailed format documentation, see [LOG STRUCTURE](LOG_STRUCTURE.md).
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License
 
 ## Acknowledgments
 
@@ -263,4 +244,3 @@ Originally developed at https://github.com/KimBurgess/zero-log-parser, this is a
 
 - Report issues: [GitHub Issues](https://github.com/ilja-radusch/zero-log-parser/issues)
 - Documentation: [GitHub Repository](https://github.com/ilja-radusch/zero-log-parser)
-- Community: Zero Motorcycle community forums
