@@ -167,19 +167,6 @@ Structured JSON with metadata and parsed telemetry:
 }
 ```
 
-### Docker
-
-Build and run using Docker:
-
-```bash
-# Build the image
-docker build . -t "zero-log-parser"
-
-# Run with volume mounting
-cd ~/zero-logs
-docker run --rm -v "$PWD:/data" zero-log-parser /data/logfile.bin -o /data/output.txt
-```
-
 ## Structured Data Features
 
 The parser automatically detects and converts various message types to structured JSON:
