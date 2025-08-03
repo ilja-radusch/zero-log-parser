@@ -272,7 +272,7 @@ class LogData(object):
                     continue
                     
         else:
-            # MBB parsing logic (simplified for now)
+            # MBB parsing logic
             offset = 0x10 if self.log_version != REV3 else 0
             entry_number = 1
             
@@ -287,17 +287,20 @@ class LogData(object):
                         offset += 1
                         continue
                         
-                    # Parse MBB entry (basic implementation)
-                    entry_data = {
-                        'entry_number': entry_number,
-                        'time': 'Unknown',
-                        'event': 'Board Status', 
-                        'conditions': 'No additional data',
-                        'log_level': 'INFO',
-                        'sort_timestamp': 0
-                    }
-                    entries.append(entry_data)
-                    entry_number += 1
+                    # Extract the entry block and unescape it (skip header and length bytes)
+                    entry_block = bytearray(log_file.raw()[offset + 2:offset + length])
+                    unescaped_block = BinaryTools.unescape_block(entry_block)
+                    
+                    if len(unescaped_block) < 7:
+                        offset += length
+                        continue
+                        
+                    # Parse MBB entry 
+                    entry_data = self.parse_mbb_entry(unescaped_block, entry_number)
+                    if entry_data:
+                        entries.append(entry_data)
+                        entry_number += 1
+                        
                     offset += length
                     
                 except Exception:
@@ -590,6 +593,195 @@ class LogData(object):
                 'conditions': f'Raw data: {display_bytes_hex(x)}' if x else 'No additional data'
             }
 
+    def parse_mbb_entry(self, unescaped_block: bytearray, entry_number: int) -> Optional[Dict]:
+        """Parse a single MBB entry"""
+        try:
+            if len(unescaped_block) < 5:
+                return None
+                
+            # Extract message type from offset 0
+            message_type = unescaped_block[0]
+            
+            # Extract timestamp from offset 1-4 (like original Gen2.timestamp_from_event)
+            timestamp_bytes = unescaped_block[1:5]
+            timestamp_int = struct.unpack('<I', timestamp_bytes)[0]
+            
+            # Skip invalid timestamps
+            if timestamp_int <= 0xfff or timestamp_int > 1893456000:
+                # Use incremental dummy timestamp for invalid entries
+                timestamp_int = 1000000000 + entry_number
+                
+            # Apply timezone offset
+            adjusted_timestamp = timestamp_int + (self.timezone_offset * 3600)
+            timestamp_str = datetime.fromtimestamp(adjusted_timestamp).strftime(ZERO_TIME_FORMAT)
+            
+            # Extract message data (after type and timestamp)
+            message_data = unescaped_block[5:] if len(unescaped_block) > 5 else bytearray()
+            
+            # Parse basic MBB message types (simplified)
+            if message_type == 0x01:
+                event = 'Board Status'
+                conditions = 'No additional data'
+            elif message_type == 0x09:
+                event = 'Key State'
+                conditions = self.parse_mbb_key_state(message_data)
+            elif message_type == 0x2c:
+                event = 'Run Status'
+                conditions = self.parse_mbb_run_status(message_data)
+            elif message_type == 0x2d:
+                event = 'Charging Status'
+                conditions = self.parse_mbb_charging_status(message_data)
+            elif message_type == 0x33:
+                event = 'Battery Status'
+                conditions = self.parse_mbb_battery_status(message_data)
+            elif message_type == 0x34:
+                event = 'Power State'
+                conditions = self.parse_mbb_power_state(message_data)
+            elif message_type == 0xfd:
+                # ASCII debug message
+                try:
+                    debug_msg = BinaryTools.decode_str(message_data).strip('\x00')
+                    if debug_msg.startswith('DEBUG:'):
+                        # Clean up DEBUG: prefix and set proper log level
+                        event = debug_msg[6:].strip()  # Remove "DEBUG:" prefix
+                        conditions = None
+                        # Will be set to DEBUG log level later
+                    elif debug_msg.startswith('INFO:'):
+                        # Handle INFO: messages
+                        event = debug_msg[5:].strip()  # Remove "INFO:" prefix
+                        conditions = None
+                        # Will be set to INFO log level later
+                    elif debug_msg.startswith('ERROR:'):
+                        # Handle ERROR: messages
+                        event = debug_msg[6:].strip()  # Remove "ERROR:" prefix
+                        conditions = None
+                        # Will be set to ERROR log level later
+                    elif debug_msg.startswith('OBD:'):
+                        # Handle OBD: messages
+                        event = debug_msg[4:].strip()  # Remove "OBD:" prefix
+                        conditions = None
+                        # Will be set to OBD log level later
+                    else:
+                        event = debug_msg if debug_msg else 'Debug Message'
+                        conditions = None
+                except:
+                    event = f'Debug Message (0x{message_type:02X})'
+                    conditions = f'Raw data: {display_bytes_hex(message_data)}'
+            else:
+                # Unknown message type
+                event = f'Unknown Message Type 0x{message_type:02X}'
+                conditions = f'Raw data: {display_bytes_hex(message_data)}' if message_data else 'No additional data'
+            
+            entry = {
+                'entry_number': entry_number,
+                'time': timestamp_str,
+                'event': event,
+                'conditions': conditions,
+                'sort_timestamp': adjusted_timestamp
+            }
+            
+            # Determine log level based on original message prefixes for 0xfd messages
+            if message_type == 0xfd:
+                try:
+                    original_debug_msg = BinaryTools.decode_str(message_data).strip('\x00')
+                    if original_debug_msg.startswith('DEBUG:'):
+                        entry['log_level'] = 'DEBUG'
+                    elif original_debug_msg.startswith('INFO:'):
+                        entry['log_level'] = 'INFO'
+                    elif original_debug_msg.startswith('ERROR:'):
+                        entry['log_level'] = 'ERROR'
+                    elif original_debug_msg.startswith('OBD:'):
+                        entry['log_level'] = 'OBD'
+                    else:
+                        entry['log_level'] = 'DEBUG'  # Default for 0xfd messages
+                except:
+                    entry['log_level'] = 'DEBUG'
+            else:
+                # For non-0xfd messages, use standard determination
+                improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(
+                    entry['event'], entry.get('conditions', ''))
+                
+                if improved_event != entry['event']:
+                    entry['event'] = improved_event
+                if improved_conditions != entry.get('conditions'):
+                    entry['conditions'] = improved_conditions
+                    
+                entry['log_level'] = determine_log_level(entry['event'], has_json_data)
+            
+            # Post-process for special structured data patterns
+            entry = self.extract_charger_data(entry)
+            
+            return entry
+            
+        except Exception as e:
+            return None
+
+    def parse_mbb_key_state(self, data: bytearray) -> str:
+        """Parse MBB key state message"""
+        if len(data) < 1:
+            return 'No data'
+        state = data[0]
+        return f'Key state: {state}'
+
+    def parse_mbb_run_status(self, data: bytearray) -> str:
+        """Parse MBB run status message"""
+        if len(data) < 1:
+            return 'No data'
+        status = data[0]
+        return f'Run status: {status}'
+
+    def parse_mbb_charging_status(self, data: bytearray) -> str:
+        """Parse MBB charging status message"""
+        if len(data) < 1:
+            return 'No data'
+        status = data[0]
+        return f'Charging status: {status}'
+
+    def parse_mbb_battery_status(self, data: bytearray) -> str:
+        """Parse MBB battery status message"""
+        if len(data) < 1:
+            return 'No data'
+        status = data[0]
+        return f'Battery status: {status}'
+
+    def parse_mbb_power_state(self, data: bytearray) -> str:
+        """Parse MBB power state message"""
+        if len(data) < 1:
+            return 'No data'
+        state = data[0]
+        return f'Power state: {state}'
+
+    def extract_charger_data(self, entry: Dict) -> Dict:
+        """Extract structured data from charger messages"""
+        event = entry.get('event', '')
+        
+        # Handle "Charger X Charging" messages
+        if event.startswith('Charger ') and 'Charging' in event:
+            # Pattern: "Charger 6 Charging SN:2329104 SW:209 237Vac  50Hz EVSE 16A"
+            import re
+            charger_pattern = r'Charger (\d+) Charging SN:(\w+) SW:(\w+) (\d+)Vac\s+(\d+)Hz EVSE (\d+)A'
+            match = re.match(charger_pattern, event)
+            
+            if match:
+                charger_num, serial, software, voltage, frequency, current = match.groups()
+                
+                # Create structured data
+                structured_data = {
+                    "charger_number": int(charger_num),
+                    "serial_number": serial,
+                    "software_version": software,
+                    "voltage_vac": int(voltage),
+                    "frequency_hz": int(frequency),
+                    "evse_current_amps": int(current)
+                }
+                
+                # Update entry
+                entry['event'] = f'Charger {charger_num} Charging'
+                entry['conditions'] = json.dumps(structured_data)
+                entry['log_level'] = 'DATA'  # Upgrade to DATA since it contains structured info
+        
+        return entry
+
     def interpolate_missing_timestamps(self, entries: List[Dict]):
         """Interpolate missing timestamps using neighboring entries."""
         for i, entry in enumerate(entries):
@@ -650,12 +842,14 @@ class LogData(object):
         return '\n'.join(output_lines)
 
     def emit_csv_decoding(self) -> str:
-        """Generate CSV output format."""
-        output_lines = ['Entry,Timestamp,LogLevel,Event,Conditions']
+        """Generate CSV output format matching original script."""
+        # Use semicolon delimiter and headers to match original
+        output_lines = ['entry;timestamp;log_level;message;conditions;uninterpreted']
         
         for entry in self.entries:
-            conditions = entry.get('conditions', '').replace('"', '""')
-            line = f"{entry.get('entry_number', 0)},{entry.get('time', '')},{entry.get('log_level', 'INFO')},{entry.get('event', '')},\"{conditions}\""
+            conditions = entry.get('conditions') or ''
+            # Don't quote or escape - original format doesn't use quotes
+            line = f"{entry.get('entry_number', 0)};{entry.get('time', '')};{entry.get('log_level', 'INFO')};{entry.get('event', '')};{conditions};"
             output_lines.append(line)
             
         return '\n'.join(output_lines)
@@ -665,7 +859,8 @@ class LogData(object):
         output_lines = ['Entry\tTimestamp\tLogLevel\tEvent\tConditions']
         
         for entry in self.entries:
-            conditions = entry.get('conditions', '').replace('\t', ' ')
+            conditions = entry.get('conditions') or ''
+            conditions = conditions.replace('\t', ' ')
             line = f"{entry.get('entry_number', 0)}\t{entry.get('time', '')}\t{entry.get('log_level', 'INFO')}\t{entry.get('event', '')}\t{conditions}"
             output_lines.append(line)
             
