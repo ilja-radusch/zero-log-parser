@@ -429,6 +429,44 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                 }
                 improved_event = 'Battery Pack Configuration'
                 improved_conditions = json.dumps(json_data)
+        
+        # Handle Tipover Detected messages
+        elif 'Tipover Detected!' in improved_event:
+            # Pattern 1: Min/Max values
+            tipover_minmax_match = re.search(
+                r'RawRoll\(min,max\): (-?\d+),(-?\d+) - FiltRoll\(min,max\): (-?\d+),(-?\d+) - RawPit\(min,max\): (-?\d+),(-?\d+) - FiltPit\(min,max\): (-?\d+),(-?\d+)',
+                improved_event
+            )
+            # Pattern 2: Current values
+            tipover_curr_match = re.search(
+                r'RawRoll\(curr\): (-?\d+) - FiltRoll\(curr\): (-?\d+) - RawPit\(curr\): (-?\d+) - FiltPit\(curr\): (-?\d+)',
+                improved_event
+            )
+            
+            if tipover_minmax_match:
+                json_data = {
+                    'measurement_type': 'min_max',
+                    'raw_roll_min': int(tipover_minmax_match.group(1)),
+                    'raw_roll_max': int(tipover_minmax_match.group(2)),
+                    'filtered_roll_min': int(tipover_minmax_match.group(3)),
+                    'filtered_roll_max': int(tipover_minmax_match.group(4)),
+                    'raw_pitch_min': int(tipover_minmax_match.group(5)),
+                    'raw_pitch_max': int(tipover_minmax_match.group(6)),
+                    'filtered_pitch_min': int(tipover_minmax_match.group(7)),
+                    'filtered_pitch_max': int(tipover_minmax_match.group(8))
+                }
+                improved_event = 'Tipover Detected'
+                improved_conditions = json.dumps(json_data)
+            elif tipover_curr_match:
+                json_data = {
+                    'measurement_type': 'current',
+                    'raw_roll_current': int(tipover_curr_match.group(1)),
+                    'filtered_roll_current': int(tipover_curr_match.group(2)),
+                    'raw_pitch_current': int(tipover_curr_match.group(3)),
+                    'filtered_pitch_current': int(tipover_curr_match.group(4))
+                }
+                improved_event = 'Tipover Detected'
+                improved_conditions = json.dumps(json_data)
     
     except (ValueError, AttributeError, IndexError) as e:
         # If parsing fails, keep original format
