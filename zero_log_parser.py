@@ -1293,14 +1293,42 @@ class LogData(object):
             unknown_entries = 0
             unknown = []
             if self.log_version < REV2 or self.log_version == REV3:
+                # First pass: collect all entries with their timestamps for sorting
+                collected_entries = []
                 read_pos = 0
                 for entry_num in range(self.entries_count):
                     (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
                                                                           unhandled,
                                                                           timezone_offset=self.timezone_offset,
                                                                           logger=logger)
-
-                    entry_payload['line'] = entry_num + 1
+                    
+                    # Extract timestamp for sorting (handle both string and numeric timestamps)
+                    time_str = entry_payload.get('time', '0')
+                    if time_str.isdigit():
+                        # Numeric timestamp (invalid/zero timestamps) - assign very low priority
+                        sort_timestamp = int(time_str)
+                    else:
+                        # Parse timestamp string to get sortable value
+                        try:
+                            from datetime import datetime
+                            parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
+                            # Filter out obviously invalid future dates (beyond 2030)
+                            if parsed_time.year > 2030:
+                                sort_timestamp = 0  # Treat as invalid
+                            else:
+                                sort_timestamp = parsed_time.timestamp()
+                        except:
+                            sort_timestamp = 0
+                    
+                    collected_entries.append((sort_timestamp, entry_payload, entry_num))
+                    read_pos += length
+                
+                # Sort entries by timestamp (newest first - descending order)
+                collected_entries.sort(key=lambda x: x[0], reverse=True)
+                
+                # Second pass: output sorted entries
+                for line_num, (sort_timestamp, entry_payload, original_entry_num) in enumerate(collected_entries):
+                    entry_payload['line'] = original_entry_num + 1  # Keep original entry number
 
                     conditions = entry_payload.get('conditions')
                     line_prefix = (self.output_line_number_field(entry_payload['line'])
@@ -1321,13 +1349,20 @@ class LogData(object):
                                     **entry_payload))
                     else:
                         write_line(line_prefix + '   {event}'.format(**entry_payload))
-
-                    read_pos += length
             else:
+                # Gen3 format (REV2) - collect entries and sort by timestamp
+                collected_gen3_entries = []
                 for line, entry_payload in enumerate(self.entries):
                     entry = Gen3.payload_to_entry(entry_payload, logger=logger)
+                    collected_gen3_entries.append((entry.time.timestamp(), entry, line))
+                
+                # Sort by timestamp (newest first)
+                collected_gen3_entries.sort(key=lambda x: x[0], reverse=True)
+                
+                # Output sorted entries
+                for line_num, (timestamp, entry, original_line) in enumerate(collected_gen3_entries):
                     conditions = entry.conditions
-                    line_prefix = (self.output_line_number_field(line)
+                    line_prefix = (self.output_line_number_field(original_line + 1)  # Keep original entry number
                                    + self.output_time_field(entry.time.strftime(ZERO_TIME_FORMAT)))
                     if conditions:
                         output_line = line_prefix + '   {event:25}  ({conditions}) [{uninterpreted}]'.format(

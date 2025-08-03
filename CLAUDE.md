@@ -60,12 +60,14 @@ Log entries follow a structured format with:
 - Uses little-endian byte order for raw log values
 - Implements XOR decoding for certain byte sequences (0xFE handling)
 - Supports ring buffer memory dumps of 0x40000 bytes (262144 bytes)
+- **Log entry sorting**: Automatically sorts entries by timestamp (newest first) while preserving original entry numbers
 - Handles multiple log file formats:
   - Legacy format: Static addresses for serial numbers, VIN, firmware/board revisions
   - Ring buffer format (REV3): Detects format by file size and starting byte (0xb2)
 - Handles multiple log section types identified by header sequences (0xa0-0xa3)
 - VIN extraction: Uses filename parsing for ring buffer format, static addresses for legacy
 - Serial number detection: Dynamically locates based on section header positions
+- Timestamp validation: Filters out invalid future dates (beyond 2030) and corrupted timestamps
 
 ### Dependencies
 
