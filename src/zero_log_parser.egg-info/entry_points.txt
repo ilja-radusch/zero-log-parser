@@ -1,3 +1,0 @@
-[console_scripts]
-zero-log-parser = zero_log_parser.cli:main
-zlp = zero_log_parser.cli:main
