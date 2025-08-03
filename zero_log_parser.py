@@ -20,14 +20,23 @@ import re
 import string
 import struct
 from collections import OrderedDict, namedtuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from math import trunc
 from time import gmtime, localtime, strftime
 from typing import Dict, List, Union
 
-ZERO_TIME_FORMAT = '%m/%d/%Y %H:%M:%S'
+# Localized time format - use system locale preference
+ZERO_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'  # ISO format is more universal
 # The output from the MBB (via serial port) lists time as GMT-7
 MBB_TIMESTAMP_GMT_OFFSET = -7 * 60 * 60
+
+def get_local_timezone_offset():
+    """Get the local system timezone offset in seconds from UTC"""
+    local_now = datetime.now()
+    utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Calculate offset in seconds
+    offset = (local_now - utc_now).total_seconds()
+    return int(offset)
 
 
 # noinspection PyMissingOrEmptyDocstring
@@ -272,13 +281,12 @@ def print_value_tabular(value, omit_units=False):
 
 class Gen2:
     @classmethod
-    def timestamp_from_event(cls, unescaped_block, use_local_time=False, timezone_offset=None):
+    def timestamp_from_event(cls, unescaped_block, use_local_time=True, timezone_offset=None):
         timestamp = BinaryTools.unpack('uint32', unescaped_block, 0x01)
         if timestamp > 0xfff:
-            if use_local_time:
-                timestamp_corrected = localtime(timestamp)
-            else:
-                timestamp_corrected = gmtime(timestamp + timezone_offset)
+            # Apply timezone offset and use GMT to avoid double timezone conversion
+            adjusted_timestamp = timestamp + (timezone_offset or 0)
+            timestamp_corrected = gmtime(adjusted_timestamp)
             return strftime(ZERO_TIME_FORMAT, timestamp_corrected)
         else:
             return str(timestamp)
@@ -1282,6 +1290,14 @@ class LogData(object):
 
             for k, v in self.header_info.items():
                 write_line('{0:18} {1}'.format(k, v))
+            
+            # Add timezone information
+            tz_hours = self.timezone_offset / 3600
+            if tz_hours >= 0:
+                tz_str = f'UTC+{tz_hours:.1f}'
+            else:
+                tz_str = f'UTC{tz_hours:.1f}'
+            write_line('{0:18} {1}'.format('Timezone', tz_str))
             write_line()
 
             write_line('Printing {0} of {0} log entries..'.format(self.entries_count))
@@ -1311,7 +1327,12 @@ class LogData(object):
                         # Parse timestamp string to get sortable value
                         try:
                             from datetime import datetime
-                            parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
+                            # Try new format first, then fall back to old format
+                            try:
+                                parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
+                            except ValueError:
+                                # Fall back to old format for compatibility
+                                parsed_time = datetime.strptime(time_str, '%m/%d/%Y %H:%M:%S')
                             # Filter out obviously invalid future dates (beyond 2030)
                             if parsed_time.year > 2030:
                                 sort_timestamp = 0  # Treat as invalid
@@ -1397,8 +1418,14 @@ def parse_log(bin_file: str, output_file: str, utc_offset_hours=None, verbose=Fa
 
     if isinstance(utc_offset_hours, int):
         timezone_offset = utc_offset_hours * 60 * 60
+    elif utc_offset_hours is not None:
+        try:
+            timezone_offset = float(utc_offset_hours) * 60 * 60
+        except (ValueError, TypeError):
+            timezone_offset = get_local_timezone_offset()
     else:
-        timezone_offset = MBB_TIMESTAMP_GMT_OFFSET
+        # Use local system timezone as default
+        timezone_offset = get_local_timezone_offset()
 
     log = LogFile(bin_file)
     log_data = LogData(log, timezone_offset=timezone_offset)
@@ -1436,7 +1463,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('bin_file', help='Zero *.bin log to decode')
-    parser.add_argument('--timezone', help='Timezone interpretation of timestamps')
+    parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET). Defaults to local system timezone.')
     parser.add_argument('-o', '--output', help='decoded log filename')
     parser.add_argument('-v', '--verbose', help='additional logging')
     args = parser.parse_args()

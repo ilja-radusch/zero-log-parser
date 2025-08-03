@@ -18,6 +18,18 @@ python3 setup.py develop
 python3 zero_log_parser.py <logfile.bin> [-o output_file]
 ```
 
+### Timezone-aware Parsing
+```bash
+# Use local system timezone (default)
+python3 zero_log_parser.py logfile.bin
+
+# Use specific timezone offset (e.g., PST = UTC-8)
+python3 zero_log_parser.py logfile.bin --timezone -8
+
+# Use specific timezone offset (e.g., CET = UTC+1) 
+python3 zero_log_parser.py logfile.bin --timezone 1
+```
+
 ### Testing
 ```bash
 python3 test.py <directory_of_log_files>
@@ -61,6 +73,8 @@ Log entries follow a structured format with:
 - Implements XOR decoding for certain byte sequences (0xFE handling)
 - Supports ring buffer memory dumps of 0x40000 bytes (262144 bytes)
 - **Log entry sorting**: Automatically sorts entries by timestamp (newest first) while preserving original entry numbers
+- **Timezone support**: Uses local system timezone by default, supports custom timezone offsets via `--timezone` parameter
+- **Localized date format**: Uses ISO 8601 format (YYYY-MM-DD HH:MM:SS) for better international compatibility
 - Handles multiple log file formats:
   - Legacy format: Static addresses for serial numbers, VIN, firmware/board revisions
   - Ring buffer format (REV3): Detects format by file size and starting byte (0xb2)
