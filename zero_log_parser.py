@@ -204,18 +204,127 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         'battery_current_amps': int(contactor_match.group(2))
                     }
                     improved_conditions = json.dumps(json_data)
+            # Handle Pack V: patterns for contactor states
+            elif 'Pack V:' in improved_conditions:
+                if 'was Closed' in improved_event:
+                    pack_v_match = re.match(
+                        r'Pack V: (\d+)mV, Switched V: (\d+)mV, Prechg Pct: (\d+)%, Dischg Cur: (\d+)mA',
+                        improved_conditions
+                    )
+                    if pack_v_match:
+                        json_data = {
+                            'pack_voltage_mv': int(pack_v_match.group(1)),
+                            'switched_voltage_mv': int(pack_v_match.group(2)),
+                            'precharge_percent': int(pack_v_match.group(3)),
+                            'discharge_current_ma': int(pack_v_match.group(4))
+                        }
+                        improved_conditions = json.dumps(json_data)
+                elif 'was Opened' in improved_event:
+                    pack_v_match = re.match(
+                        r'Pack V: (\d+)mV, Switched V: (\d+)mV, Prechg Pct: (\d+)%, Dischg Cur: (\d+)mA',
+                        improved_conditions
+                    )
+                    if pack_v_match:
+                        json_data = {
+                            'pack_voltage_mv': int(pack_v_match.group(1)),
+                            'switched_voltage_mv': int(pack_v_match.group(2)),
+                            'precharge_percent': int(pack_v_match.group(3)),
+                            'discharge_current_ma': int(pack_v_match.group(4))
+                        }
+                        improved_conditions = json.dumps(json_data)
+                elif 'drive turned on' in improved_event:
+                    pack_v_match = re.match(
+                        r'Pack V: (\d+)mV, Switched V: (\d+)mV, Duty Cycle: (\d+)%',
+                        improved_conditions
+                    )
+                    if pack_v_match:
+                        json_data = {
+                            'pack_voltage_mv': int(pack_v_match.group(1)),
+                            'switched_voltage_mv': int(pack_v_match.group(2)),
+                            'duty_cycle_percent': int(pack_v_match.group(3))
+                        }
+                        improved_conditions = json.dumps(json_data)
+        
+        # Handle Current Sensor Zeroed messages
+        elif improved_event == 'Current Sensor Zeroed' and improved_conditions:
+            sensor_match = re.match(
+                r'old: (\d+)mV, new: (\d+)mV, corrfact: (\d+)',
+                improved_conditions
+            )
+            if sensor_match:
+                json_data = {
+                    'old_voltage_mv': int(sensor_match.group(1)),
+                    'new_voltage_mv': int(sensor_match.group(2)),
+                    'correction_factor': int(sensor_match.group(3))
+                }
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle Module Registered messages
+        elif 'Registered' in improved_event and improved_conditions:
+            module_match = re.match(
+                r'serial: ([^,]+),\s*vmod: ([0-9.]+)V',
+                improved_conditions
+            )
+            if module_match:
+                json_data = {
+                    'serial_number': module_match.group(1).strip(),
+                    'module_voltage_volts': float(module_match.group(2))
+                }
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle Charger messages (Charging/Stopped) - these are in the event field
+        elif 'Charger' in improved_event and 'SN:' in improved_event:
+            charger_match = re.search(
+                r'SN:(\d+) SW:(\d+) (\d+)Vac\s*(\d+)Hz EVSE\s*(\d+)A',
+                improved_event
+            )
+            if charger_match:
+                # Extract the base charger message without the parameters
+                base_event = re.sub(r' SN:.*$', '', improved_event)
+                json_data = {
+                    'serial_number': charger_match.group(1),
+                    'software_version': int(charger_match.group(2)),
+                    'voltage_ac': int(charger_match.group(3)),
+                    'frequency_hz': int(charger_match.group(4)),
+                    'evse_current_amps': int(charger_match.group(5))
+                }
+                improved_event = base_event
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle SEVCON CAN EMCY Frame messages  
+        elif improved_event == 'SEVCON CAN EMCY Frame' and improved_conditions:
+            sevcon_match = re.match(
+                r'Error Code: 0x([0-9A-F]+), Error Reg: 0x([0-9A-F]+), Sevcon Error Code: 0x([0-9A-F]+), Data: ([0-9A-F\s]+), (.+)',
+                improved_conditions
+            )
+            if sevcon_match:
+                json_data = {
+                    'error_code': '0x' + sevcon_match.group(1),
+                    'error_register': '0x' + sevcon_match.group(2),
+                    'sevcon_error_code': '0x' + sevcon_match.group(3),
+                    'data': sevcon_match.group(4).strip(),
+                    'cause': sevcon_match.group(5).strip()
+                }
+                improved_conditions = json.dumps(json_data)
     
     except (ValueError, AttributeError, IndexError) as e:
         # If parsing fails, keep original format
         pass
     
-    return improved_event, improved_conditions, json_data
+    # Determine if this entry contains JSON data
+    has_json_data = json_data is not None
+    
+    return improved_event, improved_conditions, json_data, has_json_data
 
 
-def determine_log_level(message: str) -> str:
+def determine_log_level(message: str, is_json_data: bool = False) -> str:
     """Determine log level based on message content patterns"""
     if not message:
         return 'UNKNOWN'
+    
+    # JSON data entries get special DATA log level
+    if is_json_data:
+        return 'DATA'
     
     message_upper = message.upper()
     
@@ -1201,9 +1310,9 @@ class Gen2:
         entry['time'] = cls.timestamp_from_event(unescaped_block, timezone_offset=timezone_offset)
         
         # Apply improved message parsing and determine log level
-        improved_event, improved_conditions, json_data = improve_message_parsing(
+        improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(
             entry.get('event', ''), entry.get('conditions', ''))
-        entry['log_level'] = determine_log_level(improved_event)
+        entry['log_level'] = determine_log_level(improved_event, has_json_data)
 
         return length, entry, unhandled
 
@@ -1325,8 +1434,8 @@ class Gen3:
         elif event_conditions:
             conditions_str = event_conditions
         # Apply improved message parsing and determine log level
-        improved_event, improved_conditions, json_data = improve_message_parsing(event_message, conditions_str)
-        log_level = determine_log_level(improved_event)
+        improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(event_message, conditions_str)
+        log_level = determine_log_level(improved_event, has_json_data)
         
         return cls.Entry(event_message, event_timestamp, conditions_str,
                          display_bytes_hex(data_payload) if data_payload else '', log_level)
@@ -1652,7 +1761,7 @@ class LogData(object):
                     log_level = entry_payload.get('log_level', 'INFO')  # Use log_level from entry data
                     
                     # Apply improved message parsing
-                    improved_message, improved_conditions, json_data = improve_message_parsing(message, conditions)
+                    improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
                     
                     row_values = [
                         str(original_entry_num + 1),  # Keep original entry number
@@ -1669,7 +1778,7 @@ class LogData(object):
                     entry = Gen3.payload_to_entry(entry_payload, logger=logger)
                     
                     # Apply improved message parsing
-                    improved_event, improved_conditions, json_data = improve_message_parsing(entry.event, entry.conditions)
+                    improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(entry.event, entry.conditions)
                     log_level = entry.log_level  # Use log_level from entry data
                     
                     row_values = [line + 1, entry.time.isoformat(), log_level,
@@ -1767,7 +1876,7 @@ class LogData(object):
                     log_level = entry_payload.get('log_level', 'INFO')  # Use log_level from entry data
                     
                     # Apply improved message parsing
-                    improved_message, improved_conditions, json_data = improve_message_parsing(message, conditions)
+                    improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
                     
                     line_prefix = (self.output_line_number_field(entry_payload['line'])
                                    + self.output_time_field(entry_payload['time'])
@@ -1805,7 +1914,7 @@ class LogData(object):
                     log_level = entry.log_level  # Use log_level from entry data
                     
                     # Apply improved message parsing
-                    improved_event, improved_conditions, json_data = improve_message_parsing(entry.event, conditions)
+                    improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(entry.event, conditions)
                     
                     line_prefix = (self.output_line_number_field(original_line + 1)  # Keep original entry number
                                    + self.output_time_field(entry.time.strftime(ZERO_TIME_FORMAT))
