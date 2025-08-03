@@ -7,8 +7,23 @@ import sys
 from typing import Optional
 
 from . import __version__
-from .core import parse_log
 from .utils import console_logger, default_parsed_output_for
+
+# Import the standalone parsing logic
+import sys
+import os
+import importlib.util
+
+def load_standalone_parser():
+    """Load the standalone zero_log_parser.py module dynamically."""
+    standalone_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'zero_log_parser.py')
+    if not os.path.exists(standalone_path):
+        raise ImportError(f"Standalone parser not found at {standalone_path}")
+    
+    spec = importlib.util.spec_from_file_location("standalone_parser", standalone_path)
+    standalone_parser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(standalone_parser)
+    return standalone_parser
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -120,14 +135,45 @@ def main() -> int:
         # Parse the log file
         logger.info(f"Parsing {args.input_file} -> {output_file} (format: {args.format})")
         
-        parse_log(
-            log_file=args.input_file,
-            output_file=output_file,
-            utc_offset_hours=args.timezone,
-            verbose=args.verbose,
-            logger=logger,
-            output_format=args.format
-        )
+        # Use standalone parser logic for consistency
+        try:
+            standalone_parser = load_standalone_parser()
+            
+            # Create a LogFile object first, then LogData using standalone logic
+            log_file = standalone_parser.LogFile(args.input_file)
+            # Handle timezone offset - use system default if not specified
+            if args.timezone is not None:
+                timezone_offset = args.timezone
+            else:
+                # Use the same logic as standalone for system timezone
+                from datetime import datetime, timezone as dt_timezone
+                local_now = datetime.now()
+                utc_now = datetime.now(dt_timezone.utc).replace(tzinfo=None)
+                timezone_offset = (local_now - utc_now).total_seconds() / 3600
+            log_data = standalone_parser.LogData(log_file, timezone_offset=timezone_offset)
+            
+            # Generate output using standalone methods
+            if args.format == 'csv':
+                log_data.emit_tabular_decoding(output_file, out_format='csv')
+            elif args.format == 'tsv':
+                log_data.emit_tabular_decoding(output_file, out_format='tsv')
+            elif args.format == 'json':
+                log_data.emit_json_decoding(output_file)
+            else:  # Default to txt
+                log_data.emit_zero_compatible_decoding(output_file)
+                
+        except Exception as e:
+            logger.error(f"Error using standalone parser: {e}")
+            # Fallback to package parser
+            from .core import parse_log
+            parse_log(
+                log_file=args.input_file,
+                output_file=output_file,
+                utc_offset_hours=args.timezone,
+                verbose=args.verbose,
+                logger=None,
+                output_format=args.format
+            )
         
         logger.info("Parsing completed successfully")
         return 0
