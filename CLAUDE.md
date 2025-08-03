@@ -30,6 +30,18 @@ python3 zero_log_parser.py logfile.bin --timezone -8
 python3 zero_log_parser.py logfile.bin --timezone 1
 ```
 
+### Output Formats
+```bash
+# Text format (default)
+python3 zero_log_parser.py logfile.bin -f txt
+
+# CSV format - comma-separated values for spreadsheet import
+python3 zero_log_parser.py logfile.bin -f csv
+
+# TSV format - tab-separated values for data analysis
+python3 zero_log_parser.py logfile.bin -f tsv
+```
+
 ### Testing
 ```bash
 python3 test.py <directory_of_log_files>
@@ -75,6 +87,7 @@ Log entries follow a structured format with:
 - **Log entry sorting**: Automatically sorts entries by timestamp (newest first) while preserving original entry numbers
 - **Timezone support**: Uses local system timezone by default, supports custom timezone offsets via `--timezone` parameter
 - **Localized date format**: Uses ISO 8601 format (YYYY-MM-DD HH:MM:SS) for better international compatibility
+- **Multiple output formats**: Supports TXT (human-readable), CSV (spreadsheet), and TSV (data analysis) formats
 - Handles multiple log file formats:
   - Legacy format: Static addresses for serial numbers, VIN, firmware/board revisions
   - Ring buffer format (REV3): Detects format by file size and starting byte (0xb2)

@@ -14,6 +14,7 @@ Usage:
 """
 
 import codecs
+import json
 import logging
 import os
 import re
@@ -37,6 +38,233 @@ def get_local_timezone_offset():
     # Calculate offset in seconds
     offset = (local_now - utc_now).total_seconds()
     return int(offset)
+
+
+def improve_message_parsing(event_text: str, conditions_text: str = None) -> tuple:
+    """
+    Improve message parsing by removing redundant prefixes and converting structured data to JSON.
+    
+    Returns tuple: (improved_event, improved_conditions, json_data)
+    """
+    if not event_text:
+        return event_text, conditions_text, None
+    
+    improved_event = event_text
+    improved_conditions = conditions_text
+    json_data = None
+    
+    # Remove redundant DEBUG: prefix since we have log_level
+    if improved_event.startswith('DEBUG: '):
+        improved_event = improved_event[7:]
+    elif improved_event.startswith('INFO: '):
+        improved_event = improved_event[6:]
+    elif improved_event.startswith('ERROR: '):
+        improved_event = improved_event[7:]
+    elif improved_event.startswith('WARNING: '):
+        improved_event = improved_event[9:]
+    
+    # Parse structured data patterns and convert to JSON
+    try:
+        # Handle Discharge level messages
+        if improved_event == 'Discharge level' and improved_conditions:
+            discharge_match = re.match(
+                r'(\d+) AH, SOC:\s*(\d+)%, I:\s*(-?\d+)A, L:(\d+), l:(\d+), H:(\d+), B:(\d+), PT:(\d+)C, BT:(\d+)C, PV:(\d+), M:(.+)',
+                improved_conditions
+            )
+            if discharge_match:
+                json_data = {
+                    'amp_hours': int(discharge_match.group(1)),
+                    'state_of_charge_percent': int(discharge_match.group(2)),
+                    'current_amps': int(discharge_match.group(3)),
+                    'voltage_low': int(discharge_match.group(4)),
+                    'voltage_low_cell': int(discharge_match.group(5)),
+                    'voltage_high': int(discharge_match.group(6)),
+                    'voltage_balance': int(discharge_match.group(7)),
+                    'pack_temp_celsius': int(discharge_match.group(8)),
+                    'bms_temp_celsius': int(discharge_match.group(9)),
+                    'pack_voltage_mv': int(discharge_match.group(10)),
+                    'mode': discharge_match.group(11).strip()
+                }
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle SOC messages (comma-separated values)
+        elif improved_event.startswith('SOC:'):
+            soc_data = improved_event[4:]  # Remove 'SOC:' prefix
+            if ',' in soc_data:
+                values = [v.strip() for v in soc_data.split(',')]
+                if len(values) >= 11:  # Ensure we have enough values
+                    json_data = {
+                        'soc_raw_1': int(values[0]) if values[0].isdigit() else values[0],
+                        'soc_raw_2': int(values[1]) if values[1].isdigit() else values[1],
+                        'soc_raw_3': int(values[2]) if values[2].isdigit() else values[2],
+                        'pack_voltage_mv': int(values[3]) if values[3].isdigit() else values[3],
+                        'soc_percent_1': int(values[4]) if values[4].isdigit() else values[4],
+                        'soc_percent_2': int(values[5]) if values[5].isdigit() else values[5],
+                        'soc_percent_3': int(values[6]) if values[6].isdigit() else values[6],
+                        'balance_count': int(values[7]) if values[7].isdigit() else values[7],
+                        'voltage_max': int(values[8]) if values[8].isdigit() else values[8],
+                        'voltage_min_1': int(values[9]) if values[9].isdigit() else values[9],
+                        'voltage_min_2': int(values[10]) if values[10].isdigit() else values[10],
+                        'current_ma': int(values[11]) if len(values) > 11 and values[11].isdigit() else (values[11] if len(values) > 11 else None)
+                    }
+                    improved_event = 'SOC Data'
+                    improved_conditions = json.dumps(json_data)
+        
+        # Handle Riding status messages
+        elif improved_event == 'Riding' and improved_conditions:
+            riding_match = re.match(
+                r'PackTemp: h (\d+)C, l (\d+)C, PackSOC:\s*(\d+)%, Vpack:([0-9.]+)V, MotAmps:\s*(-?\d+), BattAmps:\s*(-?\d+), Mods:\s*(\d+), MotTemp:\s*(-?\d+)C, CtrlTemp:\s*(-?\d+)C, AmbTemp:\s*(-?\d+)C, MotRPM:\s*(-?\d+), Odo:\s*(\d+)km',
+                improved_conditions
+            )
+            if riding_match:
+                json_data = {
+                    'pack_temp_high_celsius': int(riding_match.group(1)),
+                    'pack_temp_low_celsius': int(riding_match.group(2)),
+                    'state_of_charge_percent': int(riding_match.group(3)),
+                    'pack_voltage_volts': float(riding_match.group(4)),
+                    'motor_current_amps': int(riding_match.group(5)),
+                    'battery_current_amps': int(riding_match.group(6)),
+                    'modules_status': int(riding_match.group(7)),
+                    'motor_temp_celsius': int(riding_match.group(8)),
+                    'controller_temp_celsius': int(riding_match.group(9)),
+                    'ambient_temp_celsius': int(riding_match.group(10)),
+                    'motor_rpm': int(riding_match.group(11)),
+                    'odometer_km': int(riding_match.group(12))
+                }
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle Charging status messages
+        elif improved_event == 'Charging' and improved_conditions:
+            charging_match = re.match(
+                r'PackTemp: h (\d+)C, l (\d+)C, AmbTemp: (-?\d+)C, PackSOC:\s*(\d+)%, Vpack:([0-9.]+)V, BattAmps:\s*(-?\d+), Mods:\s*(\d+), MbbChgEn: (\w+), BmsChgEn: (\w+)',
+                improved_conditions
+            )
+            if charging_match:
+                json_data = {
+                    'pack_temp_high_celsius': int(charging_match.group(1)),
+                    'pack_temp_low_celsius': int(charging_match.group(2)),
+                    'ambient_temp_celsius': int(charging_match.group(3)),
+                    'state_of_charge_percent': int(charging_match.group(4)),
+                    'pack_voltage_volts': float(charging_match.group(5)),
+                    'battery_current_amps': int(charging_match.group(6)),
+                    'modules_status': int(charging_match.group(7)),
+                    'mbb_charge_enable': charging_match.group(8),
+                    'bms_charge_enable': charging_match.group(9)
+                }
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle Disarmed status messages  
+        elif improved_event == 'Disarmed' and improved_conditions:
+            disarmed_match = re.match(
+                r'PackTemp: h (\d+)C, l (\d+)C, PackSOC:\s*(\d+)%, Vpack:([0-9.]+)V, MotAmps:\s*(-?\d+), BattAmps:\s*(-?\d+), Mods:\s*(\d+), MotTemp:\s*(-?\d+)C, CtrlTemp:\s*(-?\d+)C, AmbTemp:\s*(-?\d+)C, MotRPM:\s*(-?\d+), Odo:\s*(\d+)km',
+                improved_conditions
+            )
+            if disarmed_match:
+                json_data = {
+                    'pack_temp_high_celsius': int(disarmed_match.group(1)),
+                    'pack_temp_low_celsius': int(disarmed_match.group(2)),
+                    'state_of_charge_percent': int(disarmed_match.group(3)),
+                    'pack_voltage_volts': float(disarmed_match.group(4)),
+                    'motor_current_amps': int(disarmed_match.group(5)),
+                    'battery_current_amps': int(disarmed_match.group(6)),
+                    'modules_status': int(disarmed_match.group(7)),
+                    'motor_temp_celsius': int(disarmed_match.group(8)),
+                    'controller_temp_celsius': int(disarmed_match.group(9)),
+                    'ambient_temp_celsius': int(disarmed_match.group(10)),
+                    'motor_rpm': int(disarmed_match.group(11)),
+                    'odometer_km': int(disarmed_match.group(12))
+                }
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle Contactor messages
+        elif 'Contactor' in improved_event and improved_conditions:
+            if 'Closing Contactor' in improved_event:
+                contactor_match = re.match(
+                    r'vmod: ([0-9.]+)V, maxsys: ([0-9.]+)V, minsys: ([0-9.]+)V, diff: ([0-9.]+)V, vcap: ([0-9.]+)V, prechg: (\d+)%',
+                    improved_conditions
+                )
+                if contactor_match:
+                    json_data = {
+                        'module_voltage_volts': float(contactor_match.group(1)),
+                        'max_system_voltage_volts': float(contactor_match.group(2)),
+                        'min_system_voltage_volts': float(contactor_match.group(3)),
+                        'voltage_difference_volts': float(contactor_match.group(4)),
+                        'capacitor_voltage_volts': float(contactor_match.group(5)),
+                        'precharge_percent': int(contactor_match.group(6))
+                    }
+                    improved_conditions = json.dumps(json_data)
+            elif 'Opening Contactor' in improved_event:
+                contactor_match = re.match(
+                    r'vmod:\s*([0-9.]+)V, batt curr:\s*(-?\d+)A',
+                    improved_conditions
+                )
+                if contactor_match:
+                    json_data = {
+                        'module_voltage_volts': float(contactor_match.group(1)),
+                        'battery_current_amps': int(contactor_match.group(2))
+                    }
+                    improved_conditions = json.dumps(json_data)
+    
+    except (ValueError, AttributeError, IndexError) as e:
+        # If parsing fails, keep original format
+        pass
+    
+    return improved_event, improved_conditions, json_data
+
+
+def determine_log_level(message: str) -> str:
+    """Determine log level based on message content patterns"""
+    if not message:
+        return 'UNKNOWN'
+    
+    message_upper = message.upper()
+    
+    # Explicit level indicators (check for redundant prefixes)
+    if message.startswith('DEBUG:'):
+        return 'DEBUG'
+    elif message.startswith('INFO:'):
+        return 'INFO'
+    elif message.startswith('ERROR:') or message.startswith('FAULT:'):
+        return 'ERROR'
+    elif message.startswith('WARNING:') or message.startswith('WARN:'):
+        return 'WARNING'
+    
+    # Error patterns
+    if any(pattern in message_upper for pattern in [
+        'ERROR', 'FAULT', 'FAILED', 'FAILURE', 'CRITICAL', 'ALARM',
+        'ABORT', 'EXCEPTION', 'TIMEOUT'
+    ]):
+        return 'ERROR'
+    
+    # Warning patterns
+    if any(pattern in message_upper for pattern in [
+        'WARNING', 'WARN', 'CAUTION', 'OVERTEMP', 'UNDERVOLT', 'OVERVOLT'
+    ]):
+        return 'WARNING'
+    
+    # State change patterns (important operational states)
+    if any(pattern in message_upper for pattern in [
+        'RIDING', 'DISARMED', 'CHARGING', 'ARMED', 'STANDBY',
+        'POWER ON', 'POWER OFF', 'SLEEP', 'WAKE', 'BOOT',
+        'STARTUP', 'SHUTDOWN', 'CONNECTED', 'DISCONNECTED'
+    ]):
+        return 'STATE'
+    
+    # System/informational patterns
+    if any(pattern in message_upper for pattern in [
+        'MODULE', 'SEVCON', 'CONTACTOR', 'TEMPERATURE', 'VOLTAGE',
+        'CURRENT', 'BATTERY', 'MOTOR', 'CONFIG', 'SETTING'
+    ]):
+        return 'INFO'
+    
+    # Debug patterns (verbose/detailed info)
+    if any(pattern in message_upper for pattern in [
+        'DEBUG', 'TRACE', 'VERBOSE', 'DETAIL'
+    ]):
+        return 'DEBUG'
+    
+    # Default to INFO for unmatched messages
+    return 'INFO'
 
 
 # noinspection PyMissingOrEmptyDocstring
@@ -258,6 +486,7 @@ def display_bytes_hex(x: Union[List[int], bytearray, bytes, str]):
 
 
 EMPTY_CSV_VALUE = ''
+CSV_DELIMITER = ';'
 
 
 def print_value_tabular(value, omit_units=False):
@@ -290,6 +519,108 @@ class Gen2:
             return strftime(ZERO_TIME_FORMAT, timestamp_corrected)
         else:
             return str(timestamp)
+    
+    @classmethod
+    def interpolate_missing_timestamps(cls, entries_with_metadata, logger=None):
+        """
+        Improve missing timestamp detection by interpolating from neighboring entries.
+        
+        Args:
+            entries_with_metadata: List of tuples (sort_timestamp, entry_payload, entry_num)
+            logger: Optional logger for debugging
+            
+        Returns:
+            List of tuples with improved timestamps
+        """
+        if not entries_with_metadata:
+            return entries_with_metadata
+            
+        improved_entries = []
+        
+        # First pass: identify entries with valid and invalid timestamps
+        for i, (sort_timestamp, entry_payload, entry_num) in enumerate(entries_with_metadata):
+            time_str = entry_payload.get('time', '0')
+            has_valid_timestamp = not time_str.isdigit() and sort_timestamp > 0
+            
+            improved_entries.append({
+                'index': i,
+                'sort_timestamp': sort_timestamp,
+                'entry_payload': entry_payload,
+                'entry_num': entry_num,
+                'has_valid_timestamp': has_valid_timestamp,
+                'original_time_str': time_str
+            })
+        
+        # Second pass: interpolate missing timestamps
+        for i, entry in enumerate(improved_entries):
+            if not entry['has_valid_timestamp']:
+                # Find nearest valid timestamps before and after
+                before_entry = None
+                after_entry = None
+                
+                # Look backwards for valid timestamp
+                for j in range(i - 1, -1, -1):
+                    if improved_entries[j]['has_valid_timestamp']:
+                        before_entry = improved_entries[j]
+                        break
+                
+                # Look forwards for valid timestamp  
+                for j in range(i + 1, len(improved_entries)):
+                    if improved_entries[j]['has_valid_timestamp']:
+                        after_entry = improved_entries[j]
+                        break
+                
+                # Interpolate timestamp if we have neighbors
+                interpolated_timestamp = None
+                interpolated_time_str = None
+                
+                if before_entry and after_entry:
+                    # Interpolate between two valid timestamps
+                    before_ts = before_entry['sort_timestamp']
+                    after_ts = after_entry['sort_timestamp']
+                    before_entry_num = before_entry['entry_num']
+                    after_entry_num = after_entry['entry_num']
+                    current_entry_num = entry['entry_num']
+                    
+                    # Calculate position ratio based on entry numbers
+                    if after_entry_num != before_entry_num:
+                        ratio = (current_entry_num - before_entry_num) / (after_entry_num - before_entry_num)
+                        interpolated_timestamp = before_ts + ratio * (after_ts - before_ts)
+                    else:
+                        interpolated_timestamp = before_ts
+                        
+                elif before_entry:
+                    # Extrapolate from previous entry (assume 1 second interval)
+                    entry_gap = entry['entry_num'] - before_entry['entry_num']
+                    interpolated_timestamp = before_entry['sort_timestamp'] + entry_gap
+                    
+                elif after_entry:
+                    # Extrapolate from next entry (assume 1 second interval)  
+                    entry_gap = after_entry['entry_num'] - entry['entry_num']
+                    interpolated_timestamp = after_entry['sort_timestamp'] - entry_gap
+                
+                # Apply interpolated timestamp if we calculated one
+                if interpolated_timestamp and interpolated_timestamp > 0:
+                    try:
+                        from datetime import datetime
+                        interpolated_dt = datetime.fromtimestamp(interpolated_timestamp)
+                        interpolated_time_str = interpolated_dt.strftime(ZERO_TIME_FORMAT)
+                        
+                        # Update the entry
+                        entry['sort_timestamp'] = interpolated_timestamp
+                        entry['entry_payload']['time'] = interpolated_time_str
+                        entry['has_valid_timestamp'] = True
+                        
+                        if logger:
+                            logger.info('Interpolated timestamp for entry %d: %s (was: %s)', 
+                                       entry['entry_num'] + 1, interpolated_time_str, entry['original_time_str'])
+                    except:
+                        # If interpolation fails, keep original
+                        pass
+        
+        # Return in the original format
+        return [(entry['sort_timestamp'], entry['entry_payload'], entry['entry_num']) 
+                for entry in improved_entries]
 
     @classmethod
     def bms_discharge_level(cls, x):
@@ -1255,19 +1586,87 @@ class LogData(object):
     def emit_tabular_decoding(self, output_file: str, out_format='tsv', logger=None):
         file_suffix = '.tsv' if out_format == 'tsv' else '.csv'
         tabular_output_file = output_file.replace('.txt', file_suffix, 1)
-        field_sep = '\t' if out_format == 'tsv' else ','
-        record_sep = '\n'
-        headers = ['entry', 'timestamp', 'message', 'conditions', 'uninterpreted']
-        with open(tabular_output_file, 'w') as output:
+        field_sep = '\t' if out_format == 'tsv' else CSV_DELIMITER 
+        record_sep = os.linesep
+        headers = ['entry', 'timestamp', 'log_level', 'message', 'conditions', 'uninterpreted']
+        
+        if not logger:
+            logger = logger_for_input(self.log_file.file_path)
+            
+        with open(tabular_output_file, 'w', encoding='utf-8') as output:
             def write_row(values):
                 output.write(field_sep.join(values) + record_sep)
 
             write_row(headers)
-            for line, entry_payload in enumerate(self.entries):
-                entry = Gen3.payload_to_entry(entry_payload, logger=logger)
-                row_values = [line, entry.time.isoformat(),
-                              entry.event, entry.conditions, entry.uninterpreted]
-                write_row([print_value_tabular(x) for x in row_values])
+            
+            if self.log_version < REV2 or self.log_version == REV3:
+                # Handle REV0/REV1/REV3 formats - collect and sort entries
+                collected_entries = []
+                read_pos = 0
+                for entry_num in range(self.entries_count):
+                    (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
+                                                                          0,  # unhandled counter
+                                                                          timezone_offset=self.timezone_offset,
+                                                                          logger=logger)
+                    
+                    # Extract timestamp for sorting
+                    time_str = entry_payload.get('time', '0')
+                    if time_str.isdigit():
+                        sort_timestamp = int(time_str)
+                    else:
+                        try:
+                            from datetime import datetime
+                            try:
+                                parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
+                            except ValueError:
+                                parsed_time = datetime.strptime(time_str, '%m/%d/%Y %H:%M:%S')
+                            if parsed_time.year > 2030:
+                                sort_timestamp = 0
+                            else:
+                                sort_timestamp = parsed_time.timestamp()
+                        except:
+                            sort_timestamp = 0
+                    
+                    collected_entries.append((sort_timestamp, entry_payload, entry_num))
+                    read_pos += length
+                
+                # Apply timestamp interpolation before sorting
+                collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
+                
+                # Sort by timestamp (newest first)
+                collected_entries.sort(key=lambda x: x[0], reverse=True)
+                
+                # Write sorted entries
+                for line_num, (sort_timestamp, entry_payload, original_entry_num) in enumerate(collected_entries):
+                    message = entry_payload.get('event', '')
+                    conditions = entry_payload.get('conditions', '')
+                    
+                    # Apply improved message parsing
+                    improved_message, improved_conditions, json_data = improve_message_parsing(message, conditions)
+                    log_level = determine_log_level(improved_message)
+                    
+                    row_values = [
+                        str(original_entry_num + 1),  # Keep original entry number
+                        entry_payload.get('time', ''),
+                        log_level,
+                        improved_message,
+                        improved_conditions,
+                        ''  # uninterpreted field for compatibility
+                    ]
+                    write_row([print_value_tabular(x) for x in row_values])
+            else:
+                # Handle REV2 (Gen3) format
+                for line, entry_payload in enumerate(self.entries):
+                    entry = Gen3.payload_to_entry(entry_payload, logger=logger)
+                    
+                    # Apply improved message parsing
+                    improved_event, improved_conditions, json_data = improve_message_parsing(entry.event, entry.conditions)
+                    log_level = determine_log_level(improved_event)
+                    
+                    row_values = [line + 1, entry.time.isoformat(), log_level,
+                                  improved_event, improved_conditions, entry.uninterpreted]
+                    write_row([print_value_tabular(x) for x in row_values])
+                    
         logger_for_input(self.log_file.file_path).info('Saved to %s', tabular_output_file)
 
     @classmethod
@@ -1302,7 +1701,7 @@ class LogData(object):
 
             write_line('Printing {0} of {0} log entries..'.format(self.entries_count))
             write_line()
-            write_line(' Entry    Time of Log            Event                      Conditions')
+            write_line(' Entry    Time of Log            Level     Event                      Conditions')
             f.write(self.header_divider)
 
             unhandled = 0
@@ -1344,6 +1743,9 @@ class LogData(object):
                     collected_entries.append((sort_timestamp, entry_payload, entry_num))
                     read_pos += length
                 
+                # Apply timestamp interpolation before sorting
+                collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
+                
                 # Sort entries by timestamp (newest first - descending order)
                 collected_entries.sort(key=lambda x: x[0], reverse=True)
                 
@@ -1352,24 +1754,32 @@ class LogData(object):
                     entry_payload['line'] = original_entry_num + 1  # Keep original entry number
 
                     conditions = entry_payload.get('conditions')
+                    message = entry_payload.get('event', '')
+                    
+                    # Apply improved message parsing
+                    improved_message, improved_conditions, json_data = improve_message_parsing(message, conditions)
+                    log_level = determine_log_level(improved_message)
+                    
                     line_prefix = (self.output_line_number_field(entry_payload['line'])
-                                   + self.output_time_field(entry_payload['time']))
-                    if conditions:
-                        if '???' in conditions:
-                            u = conditions[0]
+                                   + self.output_time_field(entry_payload['time'])
+                                   + f'  {log_level:8}')
+                    
+                    if improved_conditions:
+                        if '???' in improved_conditions:
+                            u = improved_conditions[0]
                             unknown_entries += 1
                             if u not in unknown:
                                 unknown.append(u)
-                            conditions = '???'
+                            improved_conditions = '???'
                             write_line(
-                                line_prefix + '   {event} {conditions}'.format(
-                                    **entry_payload))
+                                line_prefix + '   {message} {conditions}'.format(
+                                    message=improved_message, conditions=improved_conditions))
                         else:
                             write_line(
-                                line_prefix + '   {event:25}  {conditions}'.format(
-                                    **entry_payload))
+                                line_prefix + '   {message:25}  {conditions}'.format(
+                                    message=improved_message, conditions=improved_conditions))
                     else:
-                        write_line(line_prefix + '   {event}'.format(**entry_payload))
+                        write_line(line_prefix + '   {message}'.format(message=improved_message))
             else:
                 # Gen3 format (REV2) - collect entries and sort by timestamp
                 collected_gen3_entries = []
@@ -1383,16 +1793,22 @@ class LogData(object):
                 # Output sorted entries
                 for line_num, (timestamp, entry, original_line) in enumerate(collected_gen3_entries):
                     conditions = entry.conditions
+                    
+                    # Apply improved message parsing
+                    improved_event, improved_conditions, json_data = improve_message_parsing(entry.event, conditions)
+                    log_level = determine_log_level(improved_event)
+                    
                     line_prefix = (self.output_line_number_field(original_line + 1)  # Keep original entry number
-                                   + self.output_time_field(entry.time.strftime(ZERO_TIME_FORMAT)))
-                    if conditions:
+                                   + self.output_time_field(entry.time.strftime(ZERO_TIME_FORMAT))
+                                   + f'  {log_level:8}')
+                    if improved_conditions:
                         output_line = line_prefix + '   {event:25}  ({conditions}) [{uninterpreted}]'.format(
-                            event=entry.event,
-                            conditions=entry.conditions,
+                            event=improved_event,
+                            conditions=improved_conditions,
                             uninterpreted=entry.uninterpreted)
                     else:
                         output_line = line_prefix + '   {event} [{uninterpreted}]'.format(
-                            event=entry.event,
+                            event=improved_event,
                             uninterpreted=entry.uninterpreted)
                     if re.match(r'\s+\[', output_line):
                         raise ValueError()
@@ -1408,7 +1824,7 @@ class LogData(object):
         logger.info('Saved to %s', output_file)
 
 
-def parse_log(bin_file: str, output_file: str, utc_offset_hours=None, verbose=False, logger=None):
+def parse_log(bin_file: str, output_file: str, utc_offset_hours=None, verbose=False, logger=None, output_format='txt'):
     """
     Parse a Zero binary log file into a human readable text file
     """
@@ -1430,11 +1846,23 @@ def parse_log(bin_file: str, output_file: str, utc_offset_hours=None, verbose=Fa
     log = LogFile(bin_file)
     log_data = LogData(log, timezone_offset=timezone_offset)
 
-    if log_data.has_official_output_reference():
-        log_data.emit_zero_compatible_decoding(output_file)
+    if output_format.lower() in ['csv', 'tsv']:
+        # Generate CSV/TSV output
+        log_data.emit_tabular_decoding(output_file, out_format=output_format.lower())
+    elif output_format.lower() == 'txt':
+        # Generate standard text output
+        if log_data.has_official_output_reference():
+            log_data.emit_zero_compatible_decoding(output_file)
+        else:
+            log_data.emit_tabular_decoding(output_file)
+            log_data.emit_zero_compatible_decoding(output_file)
     else:
-        log_data.emit_tabular_decoding(output_file)
-        log_data.emit_zero_compatible_decoding(output_file)
+        # Default to text format for unknown formats
+        if log_data.has_official_output_reference():
+            log_data.emit_zero_compatible_decoding(output_file)
+        else:
+            log_data.emit_tabular_decoding(output_file)
+            log_data.emit_zero_compatible_decoding(output_file)
 
 
 def default_parsed_output_for(bin_file_path: str):
@@ -1465,12 +1893,15 @@ def main():
     parser.add_argument('bin_file', help='Zero *.bin log to decode')
     parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET). Defaults to local system timezone.')
     parser.add_argument('-o', '--output', help='decoded log filename')
+    parser.add_argument('-f', '--format', choices=['txt', 'csv', 'tsv'], default='txt', 
+                       help='Output format: txt (default), csv, or tsv')
     parser.add_argument('-v', '--verbose', help='additional logging')
     args = parser.parse_args()
     log_file = args.bin_file
     output_file = args.output or default_parsed_output_for(args.bin_file)
     tz_code = args.timezone
-    parse_log(log_file, output_file, utc_offset_hours=tz_code, verbose=args.verbose)
+    output_format = args.format
+    parse_log(log_file, output_file, utc_offset_hours=tz_code, verbose=args.verbose, output_format=output_format)
 
 
 if __name__ == '__main__':
