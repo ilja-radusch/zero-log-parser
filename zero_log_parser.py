@@ -401,6 +401,34 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                 }
                 improved_event = 'Firmware Version'
                 improved_conditions = json.dumps(json_data)
+        
+        # Handle Pack: battery pack configuration messages
+        elif improved_event.startswith('Pack:'):
+            pack_match = re.match(
+                r'Pack:([^,]+),Numbricks:(\d+)',
+                improved_event
+            )
+            if pack_match:
+                pack_type = pack_match.group(1)
+                num_bricks = int(pack_match.group(2))
+                
+                # Parse pack type for additional details
+                pack_details = {}
+                if '_' in pack_type:
+                    parts = pack_type.split('_')
+                    pack_details['year'] = parts[0] if parts[0].isdigit() else None
+                    pack_details['type'] = parts[1] if len(parts) > 1 else pack_type
+                else:
+                    pack_details['type'] = pack_type
+                
+                json_data = {
+                    'pack_type': pack_type,
+                    'pack_year': pack_details.get('year'),
+                    'pack_design': pack_details.get('type'),
+                    'number_of_bricks': num_bricks
+                }
+                improved_event = 'Battery Pack Configuration'
+                improved_conditions = json.dumps(json_data)
     
     except (ValueError, AttributeError, IndexError) as e:
         # If parsing fails, keep original format
