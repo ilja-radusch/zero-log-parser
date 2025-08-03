@@ -1199,13 +1199,18 @@ class Gen2:
             unhandled += 1
 
         entry['time'] = cls.timestamp_from_event(unescaped_block, timezone_offset=timezone_offset)
+        
+        # Apply improved message parsing and determine log level
+        improved_event, improved_conditions, json_data = improve_message_parsing(
+            entry.get('event', ''), entry.get('conditions', ''))
+        entry['log_level'] = determine_log_level(improved_event)
 
         return length, entry, unhandled
 
 
 class Gen3:
     entry_data_fencepost = b'\x00\xb2'
-    Entry = namedtuple('Gen3EntryType', ['event', 'time', 'conditions', 'uninterpreted'])
+    Entry = namedtuple('Gen3EntryType', ['event', 'time', 'conditions', 'uninterpreted', 'log_level'])
     min_timestamp = datetime.strptime('2019-01-01', '%Y-%M-%d')
     max_timestamp = datetime.now() + timedelta(days=365)
 
@@ -1319,8 +1324,12 @@ class Gen3:
                 conditions_str += (k + ': ' + v) if k and v else k or v
         elif event_conditions:
             conditions_str = event_conditions
+        # Apply improved message parsing and determine log level
+        improved_event, improved_conditions, json_data = improve_message_parsing(event_message, conditions_str)
+        log_level = determine_log_level(improved_event)
+        
         return cls.Entry(event_message, event_timestamp, conditions_str,
-                         display_bytes_hex(data_payload) if data_payload else '')
+                         display_bytes_hex(data_payload) if data_payload else '', log_level)
 
 
 REV0 = 0
@@ -1640,10 +1649,10 @@ class LogData(object):
                 for line_num, (sort_timestamp, entry_payload, original_entry_num) in enumerate(collected_entries):
                     message = entry_payload.get('event', '')
                     conditions = entry_payload.get('conditions', '')
+                    log_level = entry_payload.get('log_level', 'INFO')  # Use log_level from entry data
                     
                     # Apply improved message parsing
                     improved_message, improved_conditions, json_data = improve_message_parsing(message, conditions)
-                    log_level = determine_log_level(improved_message)
                     
                     row_values = [
                         str(original_entry_num + 1),  # Keep original entry number
@@ -1661,7 +1670,7 @@ class LogData(object):
                     
                     # Apply improved message parsing
                     improved_event, improved_conditions, json_data = improve_message_parsing(entry.event, entry.conditions)
-                    log_level = determine_log_level(improved_event)
+                    log_level = entry.log_level  # Use log_level from entry data
                     
                     row_values = [line + 1, entry.time.isoformat(), log_level,
                                   improved_event, improved_conditions, entry.uninterpreted]
@@ -1755,10 +1764,10 @@ class LogData(object):
 
                     conditions = entry_payload.get('conditions')
                     message = entry_payload.get('event', '')
+                    log_level = entry_payload.get('log_level', 'INFO')  # Use log_level from entry data
                     
                     # Apply improved message parsing
                     improved_message, improved_conditions, json_data = improve_message_parsing(message, conditions)
-                    log_level = determine_log_level(improved_message)
                     
                     line_prefix = (self.output_line_number_field(entry_payload['line'])
                                    + self.output_time_field(entry_payload['time'])
@@ -1793,10 +1802,10 @@ class LogData(object):
                 # Output sorted entries
                 for line_num, (timestamp, entry, original_line) in enumerate(collected_gen3_entries):
                     conditions = entry.conditions
+                    log_level = entry.log_level  # Use log_level from entry data
                     
                     # Apply improved message parsing
                     improved_event, improved_conditions, json_data = improve_message_parsing(entry.event, conditions)
-                    log_level = determine_log_level(improved_event)
                     
                     line_prefix = (self.output_line_number_field(original_line + 1)  # Keep original entry number
                                    + self.output_time_field(entry.time.strftime(ZERO_TIME_FORMAT))
