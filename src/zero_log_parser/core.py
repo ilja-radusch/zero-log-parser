@@ -62,13 +62,11 @@ def parse_log(log_file: str, output_file: str, utc_offset_hours: float = None,
     
     # Handle timezone offset - use system default if not specified
     if utc_offset_hours is not None:
-        timezone_offset = utc_offset_hours
+        # Convert hours to seconds (standalone expects seconds)
+        timezone_offset = utc_offset_hours * 3600
     else:
-        # Use the same logic as standalone for system timezone
-        from datetime import datetime, timezone as dt_timezone
-        local_now = datetime.now()
-        utc_now = datetime.now(dt_timezone.utc).replace(tzinfo=None)
-        timezone_offset = (local_now - utc_now).total_seconds() / 3600
+        # Use the same logic as standalone for system timezone (returns seconds)
+        timezone_offset = get_local_timezone_offset()
     
     # Create LogFile and LogData objects using the working standalone logic
     log_file_obj = LogFile(log_file)
