@@ -1198,18 +1198,105 @@ class Gen2:
                 module=BinaryTools.unpack('uint8', x, 0x0))
         }
 
+
     @classmethod
     def type_from_block(cls, unescaped_block):
         return BinaryTools.unpack('uint8', unescaped_block, 0x00)
 
     @classmethod
+    def get_message_type_description(cls, message_type):
+        """Get descriptive name for log entry message types based on log_structure.md"""
+        descriptions = {
+            0x00: "Board Status",
+            0x01: "Board Status", 
+            0x02: "High Throttle Disable",
+            0x03: "BMS Discharge Level",
+            0x04: "BMS Charge Full",
+            0x05: "BMS Unknown Type 5",
+            0x06: "BMS Discharge Low", 
+            0x08: "BMS System State",
+            0x09: "Key State",
+            0x0b: "BMS SOC Adjusted for Voltage",
+            0x0d: "BMS Current Sensor Zeroed",
+            0x0e: "BMS Unknown Type 14",
+            0x10: "BMS Hibernate State",
+            0x11: "BMS Chassis Isolation Fault",
+            0x12: "BMS Reflash",
+            0x13: "BMS CAN Node ID Changed",
+            0x15: "BMS Contactor State",
+            0x16: "BMS Discharge Cutback",
+            0x18: "BMS Contactor Drive",
+            0x1c: "MBB Unknown Type 28",
+            0x1e: "MBB Unknown Type 30",
+            0x1f: "MBB Unknown Type 31",
+            0x20: "MBB Unknown Type 32",
+            0x26: "MBB Unknown Type 38",
+            0x28: "Battery CAN Link Up",
+            0x29: "Battery CAN Link Down",
+            0x2a: "Sevcon CAN Link Up",
+            0x2b: "Sevcon CAN Link Down",
+            0x2c: "Riding Status",
+            0x2d: "Charging Status", 
+            0x2f: "Sevcon Status",
+            0x30: "Charger Status",
+            0x31: "MBB BMS Isolation Fault",
+            0x33: "Battery Module Status",
+            0x34: "Power State",
+            0x35: "MBB Unknown Type 53",
+            0x36: "Sevcon Power State",
+            0x37: "MBB BT RX Buffer Overflow",
+            0x38: "Bluetooth State",
+            0x39: "Battery Discharge Current Limited",
+            0x3a: "Low Chassis Isolation",
+            0x3b: "Precharge Decay Too Steep",
+            0x3c: "Disarmed Status",
+            0x3d: "Battery Module Contactor Closed",
+            0x3e: "Cell Voltages",
+            0xfd: "Debug String"
+        }
+        return descriptions.get(message_type, f"Unknown Type {message_type}")
+
+    @classmethod
     def unhandled_entry_format(cls, message_type, x):
+        description = cls.get_message_type_description(message_type)
+        
+        # For completely unknown/unhandled types, show raw data
+        if not x or len(x) == 0:
+            return {
+                'event': description,
+                'conditions': 'No additional data'
+            }
+        
+        # Try to provide meaningful interpretation for common patterns
+        conditions = f'Raw data: {display_bytes_hex(x)}'
+        
+        # Check for specific patterns that might be meaningful
+        if len(x) == 1:
+            byte_val = BinaryTools.unpack('uint8', x, 0x00)
+            conditions += f' (decimal: {byte_val})'
+        elif len(x) == 2:
+            word_val = BinaryTools.unpack('uint16', x, 0x00)
+            conditions += f' (decimal: {word_val}, 0x{word_val:04X})'
+            # Check for specific known values
+            if word_val == 0x550A:
+                conditions += ' [Possible reference: 0x550A]'
+            elif word_val == 0x553A:
+                conditions += ' [Possible reference: 0x553A]'
+        elif len(x) == 4:
+            dword_val = BinaryTools.unpack('uint32', x, 0x00)
+            conditions += f' (decimal: {dword_val}, 0x{dword_val:08X})'
+        
+        # Try to detect if it might be ASCII text
+        try:
+            ascii_text = x.decode('ascii').rstrip('\x00')
+            if ascii_text.isprintable() and len(ascii_text) > 1:
+                conditions += f' [ASCII: "{ascii_text}"]'
+        except:
+            pass
+        
         return {
-            'event': '{message_type} {message}'.format(
-                message_type=display_bytes_hex([message_type]),
-                message=display_bytes_hex(x)
-            ),
-            'conditions': chr(message_type) + '???'
+            'event': description,
+            'conditions': conditions
         }
 
     @classmethod
@@ -1787,6 +1874,152 @@ class LogData(object):
                     
         logger_for_input(self.log_file.file_path).info('Saved to %s', tabular_output_file)
 
+    def emit_json_decoding(self, output_file: str, logger=None):
+        """Generate JSON output with structured log entries"""
+        json_output_file = output_file.replace('.txt', '.json', 1)
+        
+        if not logger:
+            logger = logger_for_input(self.log_file.file_path)
+        
+        # Prepare the JSON structure
+        json_output = {
+            'metadata': {
+                'source_file': self.log_file.file_path,
+                'log_type': 'MBB' if 'MBB' in self.log_file.file_path or 'Mbb' in self.log_file.file_path else 'BMS',
+                'parser_version': 'zero-log-parser',
+                'generated_at': datetime.now().isoformat(),
+                'timezone': f'UTC{self.timezone_offset/3600:+.1f}' if self.timezone_offset else 'UTC+0.0',
+                'total_entries': len(self.entries) if hasattr(self, 'entries') else 0
+            },
+            'log_info': {
+                'vin': getattr(self, 'vin', 'Unknown'),
+                'serial_number': getattr(self, 'serial_number', 'Unknown'),
+                'initial_date': getattr(self, 'initial_date', 'Unknown'),
+                'model': getattr(self, 'model', 'Unknown'),
+                'firmware_rev': getattr(self, 'firmware_rev', 'Unknown'),
+                'board_rev': getattr(self, 'board_rev', 'Unknown')
+            },
+            'entries': []
+        }
+        
+        # Process entries based on log version
+        if self.log_version < REV2 or self.log_version == REV3:
+            # Handle REV0/REV1/REV3 formats - collect and sort entries
+            collected_entries = []
+            read_pos = 0
+            
+            if hasattr(self, 'entries_count'):
+                for entry_num in range(self.entries_count):
+                    try:
+                        (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
+                                                                              0,  # unhandled counter
+                                                                              timezone_offset=self.timezone_offset,
+                                                                              logger=logger)
+                        
+                        # Extract timestamp for sorting
+                        time_str = entry_payload.get('time', '0')
+                        if time_str.isdigit():
+                            sort_timestamp = int(time_str)
+                        else:
+                            try:
+                                try:
+                                    parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
+                                except ValueError:
+                                    parsed_time = datetime.strptime(time_str, '%m/%d/%Y %H:%M:%S')
+                                if parsed_time.year > 2030:
+                                    sort_timestamp = 0
+                                else:
+                                    sort_timestamp = parsed_time.timestamp()
+                            except:
+                                sort_timestamp = 0
+                        
+                        collected_entries.append((sort_timestamp, entry_payload, entry_num))
+                        read_pos += length
+                    except Exception as e:
+                        logger.warning(f'Error parsing entry {entry_num}: {e}')
+                        break
+                
+                # Apply timestamp interpolation before sorting
+                collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
+                
+                # Sort by timestamp (newest first)
+                collected_entries.sort(key=lambda x: x[0], reverse=True)
+                
+                # Process sorted entries
+                for line_num, (sort_timestamp, entry_payload, original_entry_num) in enumerate(collected_entries):
+                    message = entry_payload.get('event', '')
+                    conditions = entry_payload.get('conditions', '')
+                    log_level = entry_payload.get('log_level', 'INFO')
+                    
+                    # Apply improved message parsing
+                    improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
+                    
+                    # Create JSON entry
+                    json_entry = {
+                        'entry_number': original_entry_num + 1,
+                        'timestamp': entry_payload.get('time', ''),
+                        'sort_timestamp': sort_timestamp if sort_timestamp > 0 else None,
+                        'log_level': log_level,
+                        'event': improved_message,
+                        'conditions': improved_conditions if improved_conditions else None,
+                        'is_structured_data': has_json_data
+                    }
+                    
+                    # If conditions contain JSON, parse it for structured access
+                    if improved_conditions and improved_conditions.startswith('{'):
+                        try:
+                            json_entry['structured_data'] = json.loads(improved_conditions)
+                            json_entry['conditions'] = None  # Remove redundant text version
+                        except json.JSONDecodeError:
+                            pass  # Keep as text if JSON parsing fails
+                    
+                    json_output['entries'].append(json_entry)
+        else:
+            # Handle REV2 (Gen3) format
+            for line, entry_payload in enumerate(self.entries):
+                try:
+                    entry = Gen3.payload_to_entry(entry_payload, logger=logger)
+                    
+                    # Apply improved message parsing
+                    improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(entry.event, entry.conditions)
+                    log_level = entry.log_level
+                    
+                    # Create JSON entry
+                    json_entry = {
+                        'entry_number': line + 1,
+                        'timestamp': entry.time.strftime(ZERO_TIME_FORMAT),
+                        'sort_timestamp': entry.time.timestamp(),
+                        'log_level': log_level,
+                        'event': improved_event,
+                        'conditions': improved_conditions if improved_conditions else None,
+                        'uninterpreted': entry.uninterpreted if entry.uninterpreted else None,
+                        'is_structured_data': has_json_data
+                    }
+                    
+                    # If conditions contain JSON, parse it for structured access
+                    if improved_conditions and improved_conditions.startswith('{'):
+                        try:
+                            json_entry['structured_data'] = json.loads(improved_conditions)
+                            json_entry['conditions'] = None  # Remove redundant text version
+                        except json.JSONDecodeError:
+                            pass  # Keep as text if JSON parsing fails
+                    
+                    json_output['entries'].append(json_entry)
+                except Exception as e:
+                    logger.warning(f'Error processing entry {line}: {e}')
+        
+        # Update metadata with actual entry count
+        json_output['metadata']['total_entries'] = len(json_output['entries'])
+        
+        # Write JSON output
+        try:
+            with open(json_output_file, 'w', encoding='utf-8') as f:
+                json.dump(json_output, f, indent=2, ensure_ascii=False)
+            logger.info('Saved to %s', json_output_file)
+        except Exception as e:
+            logger.error(f'Error writing JSON file {json_output_file}: {e}')
+            raise
+
     @classmethod
     def output_line_number_field(cls, line: int):
         return ' {line:05d}'.format(line=line)
@@ -1967,6 +2200,9 @@ def parse_log(bin_file: str, output_file: str, utc_offset_hours=None, verbose=Fa
     if output_format.lower() in ['csv', 'tsv']:
         # Generate CSV/TSV output
         log_data.emit_tabular_decoding(output_file, out_format=output_format.lower())
+    elif output_format.lower() == 'json':
+        # Generate JSON output
+        log_data.emit_json_decoding(output_file)
     elif output_format.lower() == 'txt':
         # Generate standard text output
         if log_data.has_official_output_reference():
@@ -2011,8 +2247,8 @@ def main():
     parser.add_argument('bin_file', help='Zero *.bin log to decode')
     parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET). Defaults to local system timezone.')
     parser.add_argument('-o', '--output', help='decoded log filename')
-    parser.add_argument('-f', '--format', choices=['txt', 'csv', 'tsv'], default='txt', 
-                       help='Output format: txt (default), csv, or tsv')
+    parser.add_argument('-f', '--format', choices=['txt', 'csv', 'tsv', 'json'], default='txt', 
+                       help='Output format: txt (default), csv, tsv, or json')
     parser.add_argument('-v', '--verbose', help='additional logging')
     args = parser.parse_args()
     log_file = args.bin_file
