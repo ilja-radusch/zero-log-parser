@@ -12,5 +12,8 @@
 # Log files
 *.bin
 *.zip
+*.csv
+*.txt
+*.tsv
 
 .DS_Store
