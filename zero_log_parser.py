@@ -355,6 +355,52 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                 }
                 improved_event = 'Disabling Due to lack of CAN control messages'
                 improved_conditions = json.dumps(json_data)
+        
+        # Handle State Machine Charge Fault messages
+        elif 'State Machine Charge Fault' in improved_event:
+            charge_fault_match = re.search(
+                r'State Machine Charge Fault\. Mode:(\d+), I:(\d+)mA, dV/dt:(\d+)mV/m\((\d+)mV/m\), TSSC:(\d+)ms, TSCO:(\d+)ms, TIPS:(\d+)ms',
+                improved_event
+            )
+            if charge_fault_match:
+                json_data = {
+                    'mode': int(charge_fault_match.group(1)),
+                    'current_ma': int(charge_fault_match.group(2)),
+                    'current_a': round(int(charge_fault_match.group(2)) / 1000.0, 3),
+                    'voltage_rate_mv_per_min': int(charge_fault_match.group(3)),
+                    'voltage_rate_mv_per_min_alt': int(charge_fault_match.group(4)),
+                    'tssc_ms': int(charge_fault_match.group(5)),
+                    'tsco_ms': int(charge_fault_match.group(6)),
+                    'tips_ms': int(charge_fault_match.group(7)),
+                    'tssc_seconds': round(int(charge_fault_match.group(5)) / 1000.0, 3),
+                    'tsco_seconds': round(int(charge_fault_match.group(6)) / 1000.0, 3),
+                    'tips_seconds': round(int(charge_fault_match.group(7)) / 1000.0, 3)
+                }
+                improved_event = 'State Machine Charge Fault'
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle Rev: firmware version messages
+        elif improved_event.startswith('Rev:'):
+            rev_match = re.match(
+                r'Rev:(\d+),Build:(\d{4}-\d{2}-\d{2})_(\d{6})\s+(\d+)\s+(\w+)',
+                improved_event
+            )
+            if rev_match:
+                build_date = rev_match.group(2)
+                build_time_raw = rev_match.group(3)
+                # Parse time as HHMMSS
+                build_time = f"{build_time_raw[:2]}:{build_time_raw[2:4]}:{build_time_raw[4:6]}"
+                
+                json_data = {
+                    'revision': int(rev_match.group(1)),
+                    'build_date': build_date,
+                    'build_time': build_time,
+                    'build_datetime': f"{build_date} {build_time}",
+                    'build_number': int(rev_match.group(4)),
+                    'branch': rev_match.group(5)
+                }
+                improved_event = 'Firmware Version'
+                improved_conditions = json.dumps(json_data)
     
     except (ValueError, AttributeError, IndexError) as e:
         # If parsing fails, keep original format
