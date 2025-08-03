@@ -2,7 +2,21 @@
 
 *note: values in raw logs are little endian*
 
-## Static addresses
+## Format Variations
+
+This document describes two observed MBB log file formats:
+
+### Legacy Format (Original Documentation)
+- Static data at fixed addresses (0x200, 0x240, etc.)
+- Log sections with headers at predictable locations
+
+### Ring Buffer Format (Newer Files, e.g., 2024+ firmware)
+- File starts directly with log entries at offset 0x0000
+- No static data at documented addresses
+- Section headers located at end of file
+- File size: exactly 0x40000 bytes (262144 bytes)
+
+## Static addresses (Legacy Format Only)
 
 Address    | Length | Contents
 ---------- | :----: | --------
@@ -11,6 +25,20 @@ Address    | Length | Contents
 0x0000027b | 2      | Firmware revision
 0x0000027d | 2      | Board revision
 0x0000027f | 3      | Bike model (`SS`, `SR`, `DS`, 'FX')
+
+## Ring Buffer Format Layout
+
+In newer log files (2024+ firmware), the structure is:
+
+Address    | Length | Contents
+---------- | :----: | --------
+0x00000000 | variable | Log entries start immediately (ring buffer)
+0x0003BA0E | 24     | First run date section (0xa1a1a1a1 + date string)
+0x0003BD10 | ~13    | Serial number (e.g., "RKT212200313")
+0x0003BF00 | 16+    | Error log section (0xa3a3a3a3 + header info)
+0x0003C100 | 16+    | Event log section (0xa2a2a2a2 + header info)
+
+*Note: Addresses may vary between files. Section headers should be located by scanning for the 4-byte sequences.*
 
 ## Log sections (located by header sequence)
 

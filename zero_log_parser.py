@@ -987,6 +987,7 @@ class Gen3:
 REV0 = 0
 REV1 = 1
 REV2 = 2
+REV3 = 3  # Ring buffer format (2024+ firmware)
 
 
 class LogData(object):
@@ -1009,43 +1010,96 @@ class LogData(object):
         sys_info = OrderedDict()
         log_version = REV0
         if len(sys_info) == 0 and (self.log_file.is_mbb() or self.log_file.is_unknown()):
-            # Check for log formats:
-            vin_v0 = log.unpack_str(0x240, count=17)  # v0 (Gen2)
-            vin_v1 = log.unpack_str(0x252, count=17)  # v1 (Gen2 2019+)
-            vin_v2 = log.unpack_str(0x029, count=17, encoding='latin_1')  # v2 (Gen3)
-            if is_vin(vin_v0):
-                log_version = REV0
-                sys_info['Serial number'] = log.unpack_str(0x200, count=21)
-                sys_info['VIN'] = vin_v0
-                sys_info['Firmware rev.'] = log.unpack('uint16', 0x27b)
-                sys_info['Board rev.'] = log.unpack('uint16', 0x27d)
-                model_offset = 0x27f
-            elif is_vin(vin_v1):
-                log_version = REV1
-                sys_info['Serial number'] = log.unpack_str(0x210, count=13)
-                sys_info['VIN'] = vin_v1
-                sys_info['Firmware rev.'] = log.unpack('uint16', 0x266)
-                sys_info['Board rev.'] = log.unpack('uint16', 0x268)  # TODO confirm Board rev.
-                model_offset = 0x26B
-            elif is_vin(vin_v2):
-                log_version = REV2
-                sys_info['Serial number'] = log.unpack_str(0x03C, count=13)
-                sys_info['VIN'] = vin_v2
-                sys_info['Firmware rev.'] = log.unpack_str(0x06b, count=7)
-                sys_info['Board rev.'] = log.unpack_str(0x05C, count=8)
-                model_offset = 0x019
+            # Check for ring buffer format (2024+ firmware) - starts with log entries
+            if log.raw()[0] == 0xb2 or (len(log.raw()) == 0x40000 and log.index_of_sequence(b'\xa1\xa1\xa1\xa1')):
+                # Ring buffer format detected
+                log_version = REV3  # New revision for ring buffer format
+                filename_vin = self.log_file.get_filename_vin()
+                sys_info['VIN'] = filename_vin if filename_vin else 'Unknown'
+                
+                # Look for serial number - it's located 0x302 bytes after first run date header
+                serial_found = False
+                first_run_idx = log.index_of_sequence(b'\xa1\xa1\xa1\xa1')
+                if first_run_idx:
+                    serial_offset = first_run_idx + 0x302
+                    try:
+                        if serial_offset + 15 < len(log.raw()):
+                            potential_serial = log.unpack_str(serial_offset, count=15).strip('\x00')
+                            if potential_serial and len(potential_serial) >= 8 and potential_serial.isalnum():
+                                sys_info['Serial number'] = potential_serial
+                                serial_found = True
+                    except:
+                        pass
+                
+                # Fallback: search near section headers if pattern-based approach didn't work  
+                if not serial_found:
+                    for search_offset in [0x3bd10, 0x3bd00, 0x3bd20]:
+                        try:
+                            if search_offset + 15 < len(log.raw()):
+                                potential_serial = log.unpack_str(search_offset, count=15).strip('\x00')
+                                if potential_serial and len(potential_serial) >= 8 and potential_serial.isalnum():
+                                    sys_info['Serial number'] = potential_serial
+                                    serial_found = True
+                                    break
+                        except:
+                            pass
+                        
+                if not serial_found:
+                    sys_info['Serial number'] = 'Unknown'
+                
+                # Look for first run date
+                first_run_idx = log.index_of_sequence(b'\xa1\xa1\xa1\xa1')
+                if first_run_idx:
+                    try:
+                        sys_info['Initial date'] = log.unpack_str(first_run_idx + 4, count=20).strip('\x00')
+                    except:
+                        sys_info['Initial date'] = 'Unknown'
+                else:
+                    sys_info['Initial date'] = 'Unknown'
+                    
+                sys_info['Model'] = 'Unknown'  # Model not found in ring buffer format
+                sys_info['Firmware rev.'] = 'Unknown'
+                sys_info['Board rev.'] = 'Unknown'
+                
             else:
-                logger.warning("Unknown Log Format")
-                sys_info['VIN'] = vin_v0
-                model_offset = 0x27f
-            filename_vin = self.log_file.get_filename_vin()
-            if 'VIN' not in sys_info or not BinaryTools.is_printable(sys_info['VIN']):
-                logger.warning("VIN unreadable: %s", sys_info['VIN'])
-            elif sys_info['VIN'] != filename_vin:
-                logger.warning("VIN mismatch: header:%s filename:%s", sys_info['VIN'],
-                               filename_vin)
-            sys_info['Model'] = log.unpack_str(model_offset, count=3)
-            sys_info['Initial date'] = log.unpack_str(0x2a, count=20)
+                # Legacy format - use original logic
+                vin_v0 = log.unpack_str(0x240, count=17)  # v0 (Gen2)
+                vin_v1 = log.unpack_str(0x252, count=17)  # v1 (Gen2 2019+)
+                vin_v2 = log.unpack_str(0x029, count=17, encoding='latin_1')  # v2 (Gen3)
+                if is_vin(vin_v0):
+                    log_version = REV0
+                    sys_info['Serial number'] = log.unpack_str(0x200, count=21)
+                    sys_info['VIN'] = vin_v0
+                    sys_info['Firmware rev.'] = log.unpack('uint16', 0x27b)
+                    sys_info['Board rev.'] = log.unpack('uint16', 0x27d)
+                    model_offset = 0x27f
+                elif is_vin(vin_v1):
+                    log_version = REV1
+                    sys_info['Serial number'] = log.unpack_str(0x210, count=13)
+                    sys_info['VIN'] = vin_v1
+                    sys_info['Firmware rev.'] = log.unpack('uint16', 0x266)
+                    sys_info['Board rev.'] = log.unpack('uint16', 0x268)  # TODO confirm Board rev.
+                    model_offset = 0x26B
+                elif is_vin(vin_v2):
+                    log_version = REV2
+                    sys_info['Serial number'] = log.unpack_str(0x03C, count=13)
+                    sys_info['VIN'] = vin_v2
+                    sys_info['Firmware rev.'] = log.unpack_str(0x06b, count=7)
+                    sys_info['Board rev.'] = log.unpack_str(0x05C, count=8)
+                    model_offset = 0x019
+                else:
+                    logger.warning("Unknown Log Format")
+                    sys_info['VIN'] = vin_v0
+                    model_offset = 0x27f
+                    
+                filename_vin = self.log_file.get_filename_vin()
+                if 'VIN' not in sys_info or not BinaryTools.is_printable(sys_info['VIN']):
+                    logger.warning("VIN unreadable: %s", sys_info['VIN'])
+                elif sys_info['VIN'] != filename_vin:
+                    logger.warning("VIN mismatch: header:%s filename:%s", sys_info['VIN'],
+                                   filename_vin)
+                sys_info['Model'] = log.unpack_str(model_offset, count=3)
+                sys_info['Initial date'] = log.unpack_str(0x2a, count=20)
         if len(sys_info) == 0 and (self.log_file.is_bms() or self.log_file.is_unknown()):
             # Check for two log formats:
             log_version_code = log.unpack('uint8', 0x4)
@@ -1074,7 +1128,31 @@ class LogData(object):
     def get_entries_and_counts(self, log: LogFile):
         logger = logger_for_input(log.file_path)
         raw_log = log.raw()
-        if self.log_version < REV2:
+        if self.log_version == REV3:
+            # Ring buffer format - entries start at beginning of file
+            entries_header_idx = log.index_of_sequence(b'\xa2\xa2\xa2\xa2')
+            if entries_header_idx is not None:
+                entries_end = log.unpack('uint32', 0x4, offset=entries_header_idx)
+                entries_start = log.unpack('uint32', 0x8, offset=entries_header_idx)
+                claimed_entries_count = log.unpack('uint32', 0xc, offset=entries_header_idx)
+                logger.info('Event log header found: start=0x%x, end=0x%x, count=%d', 
+                           entries_start, entries_end, claimed_entries_count)
+                
+                # For ring buffer, entries start at 0x0000 and wrap around
+                if entries_start >= entries_end:
+                    event_log = raw_log[entries_start:] + raw_log[0:entries_end]
+                else:
+                    event_log = raw_log[entries_start:entries_end]
+            else:
+                # Fallback: scan entire file for entries
+                logger.warning("No event log header found, scanning entire file")
+                event_log = raw_log
+                claimed_entries_count = 0
+                
+            entries_count = event_log.count(b'\xb2')
+            logger.info('%d entries found (%d claimed)', entries_count, claimed_entries_count)
+            
+        elif self.log_version < REV2:
             # handle missing header index
             entries_header_idx = log.index_of_sequence(b'\xa2\xa2\xa2\xa2')
             if entries_header_idx is not None:
@@ -1164,7 +1242,7 @@ class LogData(object):
         '+--------+----------------------+--------------------------+----------------------------------\n'
 
     def has_official_output_reference(self):
-        return self.log_version < REV2
+        return self.log_version < REV2 or self.log_version == REV3
 
     def emit_tabular_decoding(self, output_file: str, out_format='tsv', logger=None):
         file_suffix = '.tsv' if out_format == 'tsv' else '.csv'
@@ -1214,7 +1292,7 @@ class LogData(object):
             unhandled = 0
             unknown_entries = 0
             unknown = []
-            if self.log_version < REV2:
+            if self.log_version < REV2 or self.log_version == REV3:
                 read_pos = 0
                 for entry_num in range(self.entries_count):
                     (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
