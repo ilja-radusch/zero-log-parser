@@ -92,7 +92,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
             soc_data = improved_event[4:]  # Remove 'SOC:' prefix
             if ',' in soc_data:
                 values = [v.strip() for v in soc_data.split(',')]
-                if len(values) >= 11:  # Ensure we have enough values
+                if len(values) >= 11:  # Extended format (11+ values)
                     json_data = {
                         'soc_raw_1': int(values[0]) if values[0].isdigit() else values[0],
                         'soc_raw_2': int(values[1]) if values[1].isdigit() else values[1],
@@ -106,6 +106,26 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         'voltage_min_1': int(values[9]) if values[9].isdigit() else values[9],
                         'voltage_min_2': int(values[10]) if values[10].isdigit() else values[10],
                         'current_ma': int(values[11]) if len(values) > 11 and values[11].isdigit() else (values[11] if len(values) > 11 else None)
+                    }
+                    improved_event = 'SOC Data'
+                    improved_conditions = json.dumps(json_data)
+                elif len(values) == 8:  # Compact format (8 values)
+                    # Handle integer conversion with support for negative values
+                    def safe_int(val):
+                        try:
+                            return int(val)
+                        except ValueError:
+                            return val
+                    
+                    json_data = {
+                        'soc_raw_1': safe_int(values[0]),
+                        'soc_raw_2': safe_int(values[1]),
+                        'soc_raw_3': safe_int(values[2]),
+                        'pack_voltage_mv': safe_int(values[3]),
+                        'soc_percent_1': safe_int(values[4]),
+                        'soc_percent_2': safe_int(values[5]),
+                        'soc_percent_3': safe_int(values[6]),
+                        'balance_or_current': safe_int(values[7])  # Could be balance count or current
                     }
                     improved_event = 'SOC Data'
                     improved_conditions = json.dumps(json_data)
@@ -305,6 +325,35 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                     'data': sevcon_match.group(4).strip(),
                     'cause': sevcon_match.group(5).strip()
                 }
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle Voltage Across Contactor messages
+        elif improved_event.startswith('Voltage Across Contactor:'):
+            contactor_match = re.match(
+                r'Voltage Across Contactor: (\d+)mV \(([^)]+)\)',
+                improved_event
+            )
+            if contactor_match:
+                json_data = {
+                    'voltage_mv': int(contactor_match.group(1)),
+                    'voltage_v': round(int(contactor_match.group(1)) / 1000.0, 3),
+                    'status': contactor_match.group(2)
+                }
+                improved_event = 'Voltage Across Contactor'
+                improved_conditions = json.dumps(json_data)
+        
+        # Handle Disabling Due to lack of CAN control messages
+        elif 'Disabling Due to lack of CAN control messages' in improved_event and 'Dischg Cur:' in improved_event:
+            can_disable_match = re.search(
+                r'Dischg Cur: (\d+)mA',
+                improved_event
+            )
+            if can_disable_match:
+                json_data = {
+                    'discharge_current_ma': int(can_disable_match.group(1)),
+                    'discharge_current_a': round(int(can_disable_match.group(1)) / 1000.0, 3)
+                }
+                improved_event = 'Disabling Due to lack of CAN control messages'
                 improved_conditions = json.dumps(json_data)
     
     except (ValueError, AttributeError, IndexError) as e:
