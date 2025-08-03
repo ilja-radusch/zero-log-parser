@@ -163,10 +163,18 @@ class LogData(object):
                 filename_vin = log.get_filename_vin()
                 sys_info['VIN'] = filename_vin if filename_vin else 'Unknown'
                 
-                # Look for serial number
+                # Look for serial number and initial date
                 serial_found = False
                 first_run_idx = log.index_of_sequence(b'\xa1\xa1\xa1\xa1')
                 if first_run_idx:
+                    # Extract initial date like standalone version
+                    try:
+                        initial_date = log.unpack_str(first_run_idx + 4, count=20).strip('\x00')
+                        sys_info['Initial date'] = initial_date if initial_date else 'Unknown'
+                    except:
+                        sys_info['Initial date'] = 'Unknown'
+                        
+                    # Extract serial number
                     serial_offset = first_run_idx + 0x302
                     try:
                         if serial_offset + 15 < len(log.raw()):
@@ -176,14 +184,14 @@ class LogData(object):
                                 serial_found = True
                     except:
                         pass
+                else:
+                    sys_info['Initial date'] = 'Unknown'
                 
                 if not serial_found:
                     sys_info['Serial number'] = 'Unknown'
-                    
-                sys_info['Initial date'] = 'Unknown'
                 sys_info['Model'] = 'Unknown'
-                sys_info['Firmware rev'] = 'Unknown'
-                sys_info['Board rev'] = 'Unknown'
+                sys_info['Firmware rev.'] = 'Unknown'
+                sys_info['Board rev.'] = 'Unknown'
             else:
                 # Legacy format
                 log_version = REV2
@@ -823,10 +831,33 @@ class LogData(object):
             output_lines.append('')
             
         else:
-            # MBB format
+            # MBB format - match standalone zero_log_parser.py format
+            output_lines.append('﻿Zero MBB log')
+            output_lines.append('')
+            
+            # Add header info with proper formatting
             for key, value in self.header_info.items():
-                output_lines.append(f"{key}: {value}")
-            output_lines.append("")
+                if key == 'VIN':
+                    output_lines.append(f'{key:<18} {value}')
+                elif key == 'Serial number':
+                    output_lines.append(f'{key:<18} {value}')
+                elif key == 'Initial date':
+                    output_lines.append(f'{key:<18} {value}')
+                elif key == 'Model':
+                    output_lines.append(f'{key:<18} {value}')
+                elif key == 'Firmware rev.':
+                    output_lines.append(f'{key:<18} {value}')
+                elif key == 'Board rev.':
+                    output_lines.append(f'{key:<18} {value}')
+            
+            # Add timezone info
+            timezone_str = f"UTC{'+' if self.timezone_offset >= 0 else ''}{self.timezone_offset:.1f}"
+            output_lines.append(f'{"Timezone":<18} {timezone_str}')
+            output_lines.append('')
+            
+            # Add entry count
+            output_lines.append(f'Printing {len(self.entries)} of {len(self.entries)} log entries..')
+            output_lines.append('')
         
         # Table header
         output_lines.append(' Entry    Time of Log            Level     Event                      Conditions')
