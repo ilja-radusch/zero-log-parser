@@ -233,7 +233,7 @@ The parser supports multiple Zero motorcycle log formats:
 - **Legacy Format**: Static addresses for older firmware
 - **Ring Buffer Format**: Dynamic format for 2024+ firmware
 
-For detailed format documentation, see [log_structure.md](log_structure.md).
+For detailed format documentation, see [LOG STRUCTURE](LOG_STRUCTURE.md).
 
 ## Contributing
 
