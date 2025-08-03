@@ -68,7 +68,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
         # Handle Discharge level messages
         if improved_event == 'Discharge level' and improved_conditions:
             discharge_match = re.match(
-                r'(\d+) AH, SOC:\s*(\d+)%, I:\s*(-?\d+)A, L:(\d+), l:(\d+), H:(\d+), B:(\d+), PT:(\d+)C, BT:(\d+)C, PV:(\d+), M:(.+)',
+                r'(\d+) AH, SOC:\s*(\d+)%, I:\s*(-?\d+)A, L:(\d+), l:(\d+), H:(\d+), B:(\d+), PT:(\d+)C, BT:(\d+)C, PV:\s*(\d+), M:(.+)',
                 improved_conditions
             )
             if discharge_match:
@@ -310,6 +310,23 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
     except (ValueError, AttributeError, IndexError) as e:
         # If parsing fails, keep original format
         pass
+    
+    # Handle hex+A pattern entries (likely voltage readings)
+    if re.match(r'^[0-9A-Fa-f]{3,4}A$', improved_event) and not improved_conditions:
+        hex_value = improved_event[:-1]  # Remove 'A' suffix
+        try:
+            decimal_value = int(hex_value, 16)
+            # These appear to be voltage readings in millivolts
+            json_data = {
+                'hex_value': f'0x{hex_value.upper()}',
+                'voltage_mv': decimal_value,
+                'voltage_v': round(decimal_value / 1000.0, 3)
+            }
+            improved_event = 'Voltage Reading'
+            improved_conditions = json.dumps(json_data)
+        except ValueError:
+            # Keep original if hex parsing fails
+            pass
     
     # Determine if this entry contains JSON data
     has_json_data = json_data is not None
