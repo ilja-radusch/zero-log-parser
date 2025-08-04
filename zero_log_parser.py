@@ -133,7 +133,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
         # Handle Riding status messages
         elif improved_event == 'Riding' and improved_conditions:
             riding_match = re.match(
-                r'PackTemp: h (\d+)C, l (\d+)C, PackSOC:\s*(\d+)%, Vpack:([0-9.]+)V, MotAmps:\s*(-?\d+), BattAmps:\s*(-?\d+), Mods:\s*(\d+), MotTemp:\s*(-?\d+)C, CtrlTemp:\s*(-?\d+)C, AmbTemp:\s*(-?\d+)C, MotRPM:\s*(-?\d+), Odo:\s*(\d+)km',
+                r'PackTemp: h (\d+)C, l (\d+)C, PackSOC:\s*(\d+)%, Vpack:\s*([0-9.]+)V, MotAmps:\s*(-?\d+), BattAmps:\s*(-?\d+), Mods:\s*(\d+), MotTemp:\s*(-?\d+)C, CtrlTemp:\s*(-?\d+)C, AmbTemp:\s*(-?\d+)C, MotRPM:\s*(-?\d+), Odo:\s*(\d+)km',
                 improved_conditions
             )
             if riding_match:
@@ -156,7 +156,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
         # Handle Charging status messages
         elif improved_event == 'Charging' and improved_conditions:
             charging_match = re.match(
-                r'PackTemp: h (\d+)C, l (\d+)C, AmbTemp: (-?\d+)C, PackSOC:\s*(\d+)%, Vpack:([0-9.]+)V, BattAmps:\s*(-?\d+), Mods:\s*(\d+), MbbChgEn: (\w+), BmsChgEn: (\w+)',
+                r'PackTemp: h (\d+)C, l (\d+)C, AmbTemp:\s*(-?\d+)C, PackSOC:\s*(\d+)%, Vpack:\s*([0-9.]+)V, BattAmps:\s*(-?\d+), Mods:\s*(\d+), MbbChgEn:\s*(\w+), BmsChgEn:\s*(\w+)',
                 improved_conditions
             )
             if charging_match:
@@ -176,7 +176,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
         # Handle Disarmed status messages  
         elif improved_event == 'Disarmed' and improved_conditions:
             disarmed_match = re.match(
-                r'PackTemp: h (\d+)C, l (\d+)C, PackSOC:\s*(\d+)%, Vpack:([0-9.]+)V, MotAmps:\s*(-?\d+), BattAmps:\s*(-?\d+), Mods:\s*(\d+), MotTemp:\s*(-?\d+)C, CtrlTemp:\s*(-?\d+)C, AmbTemp:\s*(-?\d+)C, MotRPM:\s*(-?\d+), Odo:\s*(\d+)km',
+                r'PackTemp: h (\d+)C, l (\d+)C, PackSOC:\s*(\d+)%, Vpack:\s*([0-9.]+)V, MotAmps:\s*(-?\d+), BattAmps:\s*(-?\d+), Mods:\s*(\d+), MotTemp:\s*(-?\d+)C, CtrlTemp:\s*(-?\d+)C, AmbTemp:\s*(-?\d+)C, MotRPM:\s*(-?\d+), Odo:\s*(\d+)km',
                 improved_conditions
             )
             if disarmed_match:
