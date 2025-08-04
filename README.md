@@ -317,22 +317,6 @@ cd zero-log-parser
 pip install -e ".[dev]"
 ```
 
-### Project Structure
-
-```
-zero-log-parser/
-├── src/zero_log_parser/          # Main package
-│   ├── __init__.py               # Package exports
-│   ├── cli.py                    # Command line interface
-│   ├── core.py                   # Main parsing logic
-│   ├── utils.py                  # Utility functions
-│   └── py.typed                  # Type checking marker
-├── pyproject.toml               # Modern Python packaging (PEP 621)
-├── README.md                    # This file
-├── requirements.txt             # Development dependencies
-└── zero_log_parser.py           # Actual (standalone) parser
-```
-
 ## Log File Formats
 
 The parser supports multiple Zero motorcycle log formats:
