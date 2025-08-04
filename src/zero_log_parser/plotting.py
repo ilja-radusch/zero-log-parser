@@ -444,9 +444,12 @@ class ZeroLogPlotter:
         # Add SOC data if available
         soc_charging = self.data['mbb_charging']
         if not soc_charging.empty and 'state_of_charge_percent' in soc_charging.columns:
+            # Apply gap insertion to SOC data
+            soc_with_gaps = self._insert_gaps_for_temporal_breaks(soc_charging)
+            
             fig.add_trace(go.Scatter(
-                x=soc_charging['timestamp'],
-                y=soc_charging['state_of_charge_percent'],
+                x=soc_with_gaps['timestamp'],
+                y=soc_with_gaps['state_of_charge_percent'],
                 mode='lines+markers',
                 name='SOC',
                 line=dict(color='green'),
@@ -457,13 +460,18 @@ class ZeroLogPlotter:
         if has_recuperation_data:
             riding_with_gaps = self._insert_gaps_for_temporal_breaks(riding_data)
             
-            # Filter for negative battery current (recuperation events)
-            recuperation_data = riding_with_gaps[riding_with_gaps['battery_current_amps'] < 0].copy()
+            # Create recuperation data by converting negative current to positive, keeping NaN gaps
+            recuperation_data = riding_with_gaps.copy()
             
-            if not recuperation_data.empty:
-                # Convert negative current to positive for better visualization
-                recuperation_data['recuperation_amps'] = -recuperation_data['battery_current_amps']
-                
+            # Convert negative current to positive, set positive current to NaN
+            recuperation_data['recuperation_amps'] = riding_with_gaps['battery_current_amps'].apply(
+                lambda x: -x if pd.notna(x) and x < 0 else (pd.NA if pd.notna(x) else x)
+            )
+            
+            # Only add trace if we have actual recuperation events
+            has_recuperation_events = recuperation_data['recuperation_amps'].notna().any()
+            
+            if has_recuperation_events:
                 fig.add_trace(go.Scatter(
                     x=recuperation_data['timestamp'],
                     y=recuperation_data['recuperation_amps'],
@@ -478,8 +486,9 @@ class ZeroLogPlotter:
                 ), row=4, col=1)
                 
                 # Add zero line for reference
-                if len(recuperation_data) > 0:
-                    time_range = [recuperation_data['timestamp'].min(), recuperation_data['timestamp'].max()]
+                valid_recuperation_data = recuperation_data.dropna(subset=['recuperation_amps'])
+                if len(valid_recuperation_data) > 0:
+                    time_range = [valid_recuperation_data['timestamp'].min(), valid_recuperation_data['timestamp'].max()]
                     fig.add_trace(go.Scatter(
                         x=time_range,
                         y=[0, 0],
