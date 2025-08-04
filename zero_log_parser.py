@@ -295,7 +295,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
         # Handle Charger messages (Charging/Stopped) - these are in the event field
         elif 'Charger' in improved_event and 'SN:' in improved_event:
             charger_match = re.search(
-                r'SN:(\d+) SW:(\d+) (\d+)Vac\s*(\d+)Hz EVSE\s*(\d+)A',
+                r'SN:(\d+) SW:(\d+)\s+(\d+)Vac\s+(\d+)Hz EVSE\s+(\d+)A',
                 improved_event
             )
             if charger_match:
