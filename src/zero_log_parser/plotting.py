@@ -32,12 +32,14 @@ from .core import parse_log
 class ZeroLogPlotter:
     """Generate interactive plots from Zero Motorcycle log data."""
     
-    def __init__(self, input_file: str):
-        """Initialize plotter with input file (bin or csv)."""
+    def __init__(self, input_file: str, start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None):
+        """Initialize plotter with input file (bin or csv) and optional time filters."""
         if not PLOTLY_AVAILABLE:
             raise ImportError("plotly and pandas are required for plotting. Install with: pip install -e \".[plotting]\"")
         
         self.input_file = input_file
+        self.start_time = start_time
+        self.end_time = end_time
         self.data = {}
         self.file_type = self._detect_file_type()
         self._load_data()
@@ -95,6 +97,12 @@ class ZeroLogPlotter:
             df_expanded.append(row_dict)
         
         self.df = pd.DataFrame(df_expanded)
+        
+        # Apply time filtering if specified
+        if self.start_time or self.end_time:
+            from .utils import apply_time_filter
+            self.df = apply_time_filter(self.df, self.start_time, self.end_time)
+            print(f"Filtered to {len(self.df)} entries")
         
         # Separate by message type for easier access
         self.data = {

@@ -124,6 +124,41 @@ zero-plotting logfile.bin --plot balance     # Cell balance health
 
 # Specify output directory for HTML plots
 zero-plotting logfile.bin --plot all --plot-output-dir ./plots
+
+# Time filtering examples
+zero-plotting logfile.bin --plot thermal --start "last month"
+zero-plotting logfile.bin --plot battery --start "June 2025" --end "July 2025"
+zero-plotting logfile.bin --plot power --start "2025-06-15" --end "2025-06-20"
+zero-plotting logfile.bin --plot range --start "last 30 days"
+```
+
+#### Time Filtering
+
+The `zero-plotting` command supports flexible time filtering using `--start` and `--end` parameters:
+
+**Relative Time Formats:**
+- `"last week"`, `"last month"`, `"last year"`
+- `"last 7 days"`, `"last 30 days"`, `"last 3 months"`
+
+**Specific Date Formats:**
+- `"June 2025"`, `"December 2024"` (month and year)
+- `"2025-06-15"`, `"2025-06-15 14:30"` (ISO format)
+- `"06/15/2025"`, `"15/06/2025"` (US/EU date formats)
+- `"June 15, 2025"` (natural language)
+
+**Usage Examples:**
+```bash
+# Filter data from the last month only
+zero-plotting logs.bin --plot thermal --start "last month"
+
+# Filter data for a specific month
+zero-plotting logs.bin --plot battery --start "June 2025" --end "July 2025"
+
+# Filter data for a specific date range
+zero-plotting logs.bin --plot power --start "2025-06-15" --end "2025-06-20"
+
+# Filter data from a specific date until now
+zero-plotting logs.bin --plot range --start "2025-06-01"
 ```
 
 #### Help

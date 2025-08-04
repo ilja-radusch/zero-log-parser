@@ -34,6 +34,16 @@ def create_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument(
+        '--start',
+        help="Filter data from this time (e.g., 'last month', 'June 2025', '2025-06-15')"
+    )
+    
+    parser.add_argument(
+        '--end',
+        help="Filter data until this time (e.g., 'last week', 'July 2025', '2025-07-31')"
+    )
+    
+    parser.add_argument(
         '--version',
         action='version',
         version=f'zero-plotting {__version__}'
@@ -58,8 +68,31 @@ def main() -> int:
         parser = create_parser()
         args = parser.parse_args()
         
+        # Parse time filters
+        start_time = None
+        end_time = None
+        
+        if args.start or args.end:
+            from .utils import parse_time_filter
+            
+            if args.start:
+                try:
+                    start_time = parse_time_filter(args.start)
+                    print(f"Filtering data from: {start_time}")
+                except ValueError as e:
+                    print(f"Error parsing start time: {e}", file=sys.stderr)
+                    return 1
+            
+            if args.end:
+                try:
+                    end_time = parse_time_filter(args.end)
+                    print(f"Filtering data until: {end_time}")
+                except ValueError as e:
+                    print(f"Error parsing end time: {e}", file=sys.stderr)
+                    return 1
+        
         # Create plotter and generate plots
-        plotter = ZeroLogPlotter(args.input_file)
+        plotter = ZeroLogPlotter(args.input_file, start_time=start_time, end_time=end_time)
         
         if args.plot == 'all':
             plotter.generate_all_plots(args.output_dir)
