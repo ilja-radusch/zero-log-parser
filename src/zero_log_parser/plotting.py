@@ -107,6 +107,35 @@ class ZeroLogPlotter:
             'charger_stopped': self.df[self.df['message'] == 'Charger 6 Stopped'],
         }
     
+    def _insert_gaps_for_temporal_breaks(self, df: pd.DataFrame, gap_threshold_minutes: int = 30):
+        """Insert NaN values where there are large temporal gaps in the data."""
+        if df.empty:
+            return df
+        
+        df_sorted = df.sort_values('timestamp').copy()
+        df_with_gaps = []
+        
+        for i in range(len(df_sorted)):
+            df_with_gaps.append(df_sorted.iloc[i])
+            
+            # Check if there's a gap to the next data point
+            if i < len(df_sorted) - 1:
+                current_time = df_sorted.iloc[i]['timestamp']
+                next_time = df_sorted.iloc[i + 1]['timestamp']
+                time_diff = (next_time - current_time).total_seconds() / 60  # minutes
+                
+                # If gap is larger than threshold, insert NaN row
+                if time_diff > gap_threshold_minutes:
+                    gap_row = df_sorted.iloc[i].copy()
+                    # Set values to NaN except timestamp (which we'll set to just after current)
+                    for col in gap_row.index:
+                        if col != 'timestamp' and pd.api.types.is_numeric_dtype(df_sorted[col]):
+                            gap_row[col] = pd.NA
+                    gap_row['timestamp'] = current_time + pd.Timedelta(minutes=1)
+                    df_with_gaps.append(gap_row)
+        
+        return pd.DataFrame(df_with_gaps).reset_index(drop=True)
+    
     def plot_battery_performance(self) -> Figure:
         """Plot battery SOC over time with riding modes."""
         fig = go.Figure()
@@ -132,12 +161,16 @@ class ZeroLogPlotter:
             
             for mode in combined_df['mode'].unique():
                 mode_data = combined_df[combined_df['mode'] == mode]
+                # Insert gaps for temporal breaks within each mode
+                mode_data_with_gaps = self._insert_gaps_for_temporal_breaks(mode_data)
+                
                 fig.add_trace(go.Scatter(
-                    x=mode_data['timestamp'],
-                    y=mode_data['state_of_charge_percent'],
+                    x=mode_data_with_gaps['timestamp'],
+                    y=mode_data_with_gaps['state_of_charge_percent'],
                     mode='lines+markers',
                     name=mode,
-                    line=dict(color=colors.get(mode, '#8c564b'))
+                    line=dict(color=colors.get(mode, '#8c564b')),
+                    connectgaps=False  # Show gaps between separate sessions
                 ))
         
         fig.update_layout(
@@ -156,6 +189,9 @@ class ZeroLogPlotter:
         if riding_data.empty:
             return go.Figure().add_annotation(text="No riding data available", 
                                             xref="paper", yref="paper", x=0.5, y=0.5)
+        
+        # Insert gaps for temporal breaks
+        riding_data = self._insert_gaps_for_temporal_breaks(riding_data)
         
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
@@ -186,7 +222,7 @@ class ZeroLogPlotter:
         riding_data = self.data['mbb_riding']
         
         # Only use riding data to show gaps when motorcycle is off
-        temp_data = riding_data.sort_values('timestamp')
+        temp_data = self._insert_gaps_for_temporal_breaks(riding_data.sort_values('timestamp'))
         
         if temp_data.empty:
             return go.Figure().add_annotation(text="No temperature data available",
@@ -268,7 +304,7 @@ class ZeroLogPlotter:
             return go.Figure().add_annotation(text="No voltage data available",
                                             xref="paper", yref="paper", x=0.5, y=0.5)
         
-        combined_data = pd.concat(voltage_data).sort_values('timestamp')
+        combined_data = self._insert_gaps_for_temporal_breaks(pd.concat(voltage_data).sort_values('timestamp'))
         
         fig = go.Figure()
         
@@ -279,7 +315,8 @@ class ZeroLogPlotter:
                 y=combined_data['pack_voltage_volts'],
                 mode='lines',
                 name='Pack Voltage',
-                line=dict(color='blue')
+                line=dict(color='blue'),
+                connectgaps=False
             ))
         
         # Min/Max cell voltages from BMS data
@@ -293,7 +330,8 @@ class ZeroLogPlotter:
                 y=voltage_max_v,
                 mode='lines',
                 name='Max Cell Voltage',
-                line=dict(color='red', dash='dash')
+                line=dict(color='red', dash='dash'),
+                connectgaps=False
             ))
             
             fig.add_trace(go.Scatter(
@@ -303,7 +341,8 @@ class ZeroLogPlotter:
                 name='Min Cell Voltage',
                 line=dict(color='orange', dash='dash'),
                 fill='tonexty',
-                fillcolor='rgba(255,165,0,0.2)'
+                fillcolor='rgba(255,165,0,0.2)',
+                connectgaps=False
             ))
         
         fig.update_layout(
@@ -366,7 +405,7 @@ class ZeroLogPlotter:
         )
         
         # Combine charging data
-        all_charging = pd.concat([charging_data, stopped_data]).sort_values('timestamp')
+        all_charging = self._insert_gaps_for_temporal_breaks(pd.concat([charging_data, stopped_data]).sort_values('timestamp'))
         
         if 'voltage_ac' in all_charging.columns:
             fig.add_trace(go.Scatter(
@@ -374,7 +413,8 @@ class ZeroLogPlotter:
                 y=all_charging['voltage_ac'],
                 mode='lines+markers',
                 name='AC Voltage',
-                line=dict(color='blue')
+                line=dict(color='blue'),
+                connectgaps=False
             ), row=1, col=1)
         
         if 'evse_current_amps' in all_charging.columns:
@@ -383,7 +423,8 @@ class ZeroLogPlotter:
                 y=all_charging['evse_current_amps'],
                 mode='lines+markers',
                 name='EVSE Current',
-                line=dict(color='red')
+                line=dict(color='red'),
+                connectgaps=False
             ), row=2, col=1)
         
         # Add SOC data if available
@@ -394,7 +435,8 @@ class ZeroLogPlotter:
                 y=soc_charging['state_of_charge_percent'],
                 mode='lines+markers',
                 name='SOC',
-                line=dict(color='green')
+                line=dict(color='green'),
+                connectgaps=False
             ), row=3, col=1)
         
         fig.update_layout(title_text='Charging Session Analysis', height=800)
@@ -408,6 +450,9 @@ class ZeroLogPlotter:
             return go.Figure().add_annotation(text="No cell balance data available",
                                             xref="paper", yref="paper", x=0.5, y=0.5)
         
+        # Insert gaps for temporal breaks
+        bms_data = self._insert_gaps_for_temporal_breaks(bms_data)
+        
         fig = go.Figure()
         
         fig.add_trace(go.Scatter(
@@ -415,7 +460,8 @@ class ZeroLogPlotter:
             y=bms_data['voltage_balance'],
             mode='lines+markers',
             name='Voltage Balance',
-            line=dict(color='purple')
+            line=dict(color='purple'),
+            connectgaps=False
         ))
         
         # Add threshold line (typical good balance is <10mV)
