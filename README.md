@@ -241,6 +241,25 @@ Detailed energy usage pattern analysis:
 
 **Example Output**: All plots are generated as interactive HTML files that can be opened in any web browser, featuring zoom, pan, and hover capabilities for detailed data exploration.
 
+### Example Plots
+
+Here are some example visualizations generated from Zero Motorcycle log data:
+
+#### Thermal Management - Temperature Deltas from Ambient
+Shows component temperatures relative to ambient conditions, with gaps indicating when the motorcycle was switched off.
+
+![Thermal Management](plots/thermal_management.png)
+
+#### Performance vs Efficiency Analysis  
+Correlates motor RPM with battery current consumption, colored by state of charge for performance optimization insights.
+
+![Performance Efficiency](plots/performance_efficiency.png)
+
+#### Range Analysis - Odometer vs State of Charge
+Analyzes energy consumption patterns across distance traveled, with current draw indicators for riding efficiency assessment.
+
+![Range Analysis](plots/range_analysis.png)
+
 ## Development
 
 ### Setup Development Environment
