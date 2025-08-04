@@ -30,7 +30,7 @@ from typing import Dict, List, Union
 try:
     from src.zero_log_parser import __version__ as PARSER_VERSION
 except ImportError:
-    PARSER_VERSION = "2.1.0"  # Fallback version
+    PARSER_VERSION = "2.2.0"  # Fallback version
 
 # Localized time format - use system locale preference
 ZERO_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'  # ISO format is more universal

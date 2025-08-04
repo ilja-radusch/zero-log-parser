@@ -6,7 +6,7 @@ Supports both MBB (Main Bike Board) and BMS (Battery Management System) logs.
 
 from .core import LogData, parse_log
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 # Don't import plotting at package level - it will be imported only when needed
 __all__ = [
