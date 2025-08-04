@@ -53,6 +53,20 @@ def create_parser() -> argparse.ArgumentParser:
         version=f'zero-log-parser {__version__}'
     )
     
+    # Plotting arguments
+    parser.add_argument(
+        '--plot',
+        choices=['all', 'battery', 'power', 'thermal', 'voltage', 
+                'performance', 'charging', 'balance', 'range'],
+        help="Generate interactive plots (requires plotly and pandas)"
+    )
+    
+    parser.add_argument(
+        '--plot-output-dir',
+        default='.',
+        help="Output directory for plot HTML files (default: current directory)"
+    )
+    
     return parser
 
 
@@ -130,6 +144,66 @@ def main() -> int:
         )
         
         logger.info("Parsing completed successfully")
+        
+        # Generate plots if requested
+        if args.plot:
+            try:
+                from .plotting import ZeroLogPlotter
+                
+                # Use the generated output file or convert bin to CSV for plotting
+                plot_input_file = args.input_file
+                if args.format != 'csv':
+                    # Generate CSV for plotting
+                    csv_output = output_file.replace('.txt', '.csv').replace('.tsv', '.csv').replace('.json', '.csv')
+                    if not csv_output.endswith('.csv'):
+                        csv_output += '.csv'
+                    
+                    logger.info(f"Generating CSV for plotting: {csv_output}")
+                    parse_log(
+                        log_file=args.input_file,
+                        output_file=csv_output,
+                        utc_offset_hours=args.timezone,
+                        verbose=args.verbose,
+                        logger=logger,
+                        output_format='csv'
+                    )
+                    plot_input_file = csv_output
+                else:
+                    plot_input_file = output_file
+                
+                logger.info(f"Generating plots from: {plot_input_file}")
+                plotter = ZeroLogPlotter(plot_input_file)
+                
+                if args.plot == 'all':
+                    plotter.generate_all_plots(args.plot_output_dir)
+                    logger.info("All plots generated successfully")
+                else:
+                    # Generate specific plot
+                    plot_methods = {
+                        'battery': plotter.plot_battery_performance,
+                        'power': plotter.plot_power_consumption,
+                        'thermal': plotter.plot_thermal_management,
+                        'voltage': plotter.plot_voltage_analysis,
+                        'performance': plotter.plot_performance_efficiency,
+                        'charging': plotter.plot_charging_analysis,
+                        'balance': plotter.plot_cell_balance,
+                        'range': plotter.plot_range_analysis,
+                    }
+                    
+                    fig = plot_methods[args.plot]()
+                    base_name = os.path.splitext(os.path.basename(args.input_file))[0]
+                    plot_output_file = os.path.join(args.plot_output_dir, f"{base_name}_{args.plot}.html")
+                    fig.write_html(plot_output_file)
+                    logger.info(f"Generated plot: {plot_output_file}")
+                    
+            except ImportError as e:
+                logger.error(f"Plotting dependencies not available: {e}")
+                logger.error("Install with: pip install -e \".[plotting]\"")
+                return 1
+            except Exception as e:
+                logger.error(f"Error generating plots: {e}")
+                return 1
+        
         return 0
         
     except KeyboardInterrupt:

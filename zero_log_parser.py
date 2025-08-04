@@ -26,6 +26,12 @@ from math import trunc
 from time import gmtime, localtime, strftime
 from typing import Dict, List, Union
 
+# Parser version - try to import from package, fallback to hardcoded
+try:
+    from src.zero_log_parser import __version__ as PARSER_VERSION
+except ImportError:
+    PARSER_VERSION = "2.1.0"  # Fallback version
+
 # Localized time format - use system locale preference
 ZERO_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'  # ISO format is more universal
 # The output from the MBB (via serial port) lists time as GMT-7
@@ -2064,7 +2070,7 @@ class LogData(object):
             'metadata': {
                 'source_file': self.log_file.file_path,
                 'log_type': 'MBB' if 'MBB' in self.log_file.file_path or 'Mbb' in self.log_file.file_path else 'BMS',
-                'parser_version': 'zero-log-parser',
+                'parser_version': f'zero-log-parser-{PARSER_VERSION}',
                 'generated_at': datetime.now().isoformat(),
                 'timezone': f'UTC{self.timezone_offset/3600:+.1f}' if self.timezone_offset else 'UTC+0.0',
                 'total_entries': len(self.entries) if hasattr(self, 'entries') else 0
@@ -2428,12 +2434,63 @@ def main():
     parser.add_argument('-f', '--format', choices=['txt', 'csv', 'tsv', 'json'], default='txt', 
                        help='Output format: txt (default), csv, tsv, or json')
     parser.add_argument('-v', '--verbose', help='additional logging')
+    parser.add_argument('--plot', choices=[
+        'all', 'battery', 'power', 'thermal', 'voltage', 
+        'performance', 'charging', 'balance', 'range'
+    ], help='Generate interactive plots (requires plotly)')
+    parser.add_argument('--plot-output-dir', default='plots/', 
+                       help='Output directory for plot HTML files')
     args = parser.parse_args()
     log_file = args.bin_file
     output_file = args.output or default_parsed_output_for(args.bin_file)
     tz_code = args.timezone
     output_format = args.format
     parse_log(log_file, output_file, utc_offset_hours=tz_code, verbose=args.verbose, output_format=output_format)
+    
+    # Generate plots if requested
+    if args.plot:
+        try:
+            from zero_plotting import ZeroLogPlotter
+            
+            # Use the generated output file or convert bin to CSV
+            plot_input_file = log_file
+            if output_format != 'csv':
+                # Generate CSV for plotting
+                csv_output = output_file.replace('.txt', '.csv').replace('.tsv', '.csv').replace('.json', '.csv')
+                if not csv_output.endswith('.csv'):
+                    csv_output += '.csv'
+                parse_log(log_file, csv_output, utc_offset_hours=tz_code, verbose=args.verbose, output_format='csv')
+                plot_input_file = csv_output
+            else:
+                plot_input_file = output_file
+            
+            plotter = ZeroLogPlotter(plot_input_file)
+            
+            if args.plot == 'all':
+                plotter.generate_all_plots(args.plot_output_dir)
+            else:
+                # Generate specific plot
+                plot_methods = {
+                    'battery': plotter.plot_battery_performance,
+                    'power': plotter.plot_power_consumption,
+                    'thermal': plotter.plot_thermal_management,
+                    'voltage': plotter.plot_voltage_analysis,
+                    'performance': plotter.plot_performance_efficiency,
+                    'charging': plotter.plot_charging_analysis,
+                    'balance': plotter.plot_cell_balance,
+                    'range': plotter.plot_range_analysis,
+                }
+                
+                fig = plot_methods[args.plot]()
+                base_name = os.path.splitext(os.path.basename(log_file))[0]
+                output_file_plot = os.path.join(args.plot_output_dir, f"{base_name}_{args.plot}.html")
+                fig.write_html(output_file_plot)
+                print(f"Generated plot: {output_file_plot}")
+                
+        except ImportError:
+            print("Error: plotly and pandas are required for plotting. Install with: pip install plotly pandas")
+        except Exception as e:
+            print(f"Error generating plots: {e}")
 
 
 if __name__ == '__main__':
