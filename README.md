@@ -119,7 +119,7 @@ zero-plotting logfile.bin --plot range       # Range estimation and efficiency
 zero-plotting logfile.bin --plot performance # RPM vs efficiency analysis
 zero-plotting logfile.bin --plot thermal     # Temperature monitoring
 zero-plotting logfile.bin --plot voltage     # Voltage analysis
-zero-plotting logfile.bin --plot charging    # Charging session analysis
+zero-plotting logfile.bin --plot charging    # Charging session & recuperation analysis
 zero-plotting logfile.bin --plot balance     # Cell balance health
 
 # Specify output directory for HTML plots
@@ -285,6 +285,15 @@ Detailed energy usage pattern analysis:
 - Acceleration vs consumption correlation for riding style analysis
 - Peak power events and their impact on overall efficiency
 - Power distribution analysis across different riding modes
+
+### Charging & Recuperation Analysis (`--plot charging`)
+Comprehensive charging session and energy recovery analysis:
+- AC voltage monitoring during charging sessions
+- EVSE (Electric Vehicle Supply Equipment) current tracking
+- State of charge progression during charging
+- **Recuperation analysis**: Energy recovery during regenerative braking (negative battery current)
+- Regenerative braking efficiency and frequency analysis
+- Energy flow visualization showing both consumption and recovery
 
 **Example Output**: All plots are generated as interactive HTML files that can be opened in any web browser, featuring zoom, pan, and hover capabilities for detailed data exploration.
 

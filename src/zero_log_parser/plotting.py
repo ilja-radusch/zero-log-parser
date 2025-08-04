@@ -398,42 +398,48 @@ class ZeroLogPlotter:
         return fig
     
     def plot_charging_analysis(self) -> Figure:
-        """Plot charging session analysis."""
+        """Plot charging session analysis including recuperation."""
         charging_data = self.data['charger_charging']
         stopped_data = self.data['charger_stopped']
+        riding_data = self.data['mbb_riding']
         
-        if charging_data.empty and stopped_data.empty:
-            return go.Figure().add_annotation(text="No charging data available",
+        # Check if we have any relevant data
+        has_charging_data = not (charging_data.empty and stopped_data.empty)
+        has_recuperation_data = not riding_data.empty and 'battery_current_amps' in riding_data.columns
+        
+        if not has_charging_data and not has_recuperation_data:
+            return go.Figure().add_annotation(text="No charging or recuperation data available",
                                             xref="paper", yref="paper", x=0.5, y=0.5)
         
         fig = make_subplots(
-            rows=3, cols=1,
-            subplot_titles=('AC Voltage', 'EVSE Current', 'State of Charge'),
-            vertical_spacing=0.08
+            rows=4, cols=1,
+            subplot_titles=('AC Voltage', 'EVSE Current', 'State of Charge', 'Recuperation (Regen Braking)'),
+            vertical_spacing=0.06
         )
         
-        # Combine charging data
-        all_charging = self._insert_gaps_for_temporal_breaks(pd.concat([charging_data, stopped_data]).sort_values('timestamp'))
-        
-        if 'voltage_ac' in all_charging.columns:
-            fig.add_trace(go.Scatter(
-                x=all_charging['timestamp'],
-                y=all_charging['voltage_ac'],
-                mode='lines+markers',
-                name='AC Voltage',
-                line=dict(color='blue'),
-                connectgaps=False
-            ), row=1, col=1)
-        
-        if 'evse_current_amps' in all_charging.columns:
-            fig.add_trace(go.Scatter(
-                x=all_charging['timestamp'],
-                y=all_charging['evse_current_amps'],
-                mode='lines+markers',
-                name='EVSE Current',
-                line=dict(color='red'),
-                connectgaps=False
-            ), row=2, col=1)
+        # Add charging data if available
+        if has_charging_data:
+            all_charging = self._insert_gaps_for_temporal_breaks(pd.concat([charging_data, stopped_data]).sort_values('timestamp'))
+            
+            if 'voltage_ac' in all_charging.columns:
+                fig.add_trace(go.Scatter(
+                    x=all_charging['timestamp'],
+                    y=all_charging['voltage_ac'],
+                    mode='lines+markers',
+                    name='AC Voltage',
+                    line=dict(color='blue'),
+                    connectgaps=False
+                ), row=1, col=1)
+            
+            if 'evse_current_amps' in all_charging.columns:
+                fig.add_trace(go.Scatter(
+                    x=all_charging['timestamp'],
+                    y=all_charging['evse_current_amps'],
+                    mode='lines+markers',
+                    name='EVSE Current',
+                    line=dict(color='red'),
+                    connectgaps=False
+                ), row=2, col=1)
         
         # Add SOC data if available
         soc_charging = self.data['mbb_charging']
@@ -447,7 +453,44 @@ class ZeroLogPlotter:
                 connectgaps=False
             ), row=3, col=1)
         
-        fig.update_layout(title_text='Charging Session Analysis', height=800)
+        # Add recuperation analysis (negative battery current during riding)
+        if has_recuperation_data:
+            riding_with_gaps = self._insert_gaps_for_temporal_breaks(riding_data)
+            
+            # Filter for negative battery current (recuperation events)
+            recuperation_data = riding_with_gaps[riding_with_gaps['battery_current_amps'] < 0].copy()
+            
+            if not recuperation_data.empty:
+                # Convert negative current to positive for better visualization
+                recuperation_data['recuperation_amps'] = -recuperation_data['battery_current_amps']
+                
+                fig.add_trace(go.Scatter(
+                    x=recuperation_data['timestamp'],
+                    y=recuperation_data['recuperation_amps'],
+                    mode='lines+markers',
+                    name='Recuperation Current',
+                    line=dict(color='orange'),
+                    connectgaps=False,
+                    hovertemplate='<b>Recuperation</b><br>' +
+                                'Time: %{x}<br>' +
+                                'Regen Current: %{y:.1f}A<br>' +
+                                '<extra></extra>'
+                ), row=4, col=1)
+                
+                # Add zero line for reference
+                if len(recuperation_data) > 0:
+                    time_range = [recuperation_data['timestamp'].min(), recuperation_data['timestamp'].max()]
+                    fig.add_trace(go.Scatter(
+                        x=time_range,
+                        y=[0, 0],
+                        mode='lines',
+                        name='Zero Line',
+                        line=dict(color='gray', dash='dash', width=1),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ), row=4, col=1)
+        
+        fig.update_layout(title_text='Charging & Recuperation Analysis', height=1000)
         return fig
     
     def plot_cell_balance(self) -> Figure:
