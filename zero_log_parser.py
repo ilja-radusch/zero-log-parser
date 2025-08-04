@@ -2483,6 +2483,14 @@ def main():
                 
                 fig = plot_methods[args.plot]()
                 base_name = os.path.splitext(os.path.basename(log_file))[0]
+                
+                # Create output directory if it doesn't exist
+                try:
+                    os.makedirs(args.plot_output_dir, exist_ok=True)
+                except OSError as e:
+                    print(f"Error creating output directory '{args.plot_output_dir}': {e}")
+                    return
+                
                 output_file_plot = os.path.join(args.plot_output_dir, f"{base_name}_{args.plot}.html")
                 fig.write_html(output_file_plot)
                 print(f"Generated plot: {output_file_plot}")

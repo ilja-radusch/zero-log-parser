@@ -193,6 +193,14 @@ def main() -> int:
                     
                     fig = plot_methods[args.plot]()
                     base_name = os.path.splitext(os.path.basename(args.input_file))[0]
+                    
+                    # Create output directory if it doesn't exist
+                    try:
+                        os.makedirs(args.plot_output_dir, exist_ok=True)
+                    except OSError as e:
+                        logger.error(f"Error creating output directory '{args.plot_output_dir}': {e}")
+                        return 1
+                    
                     plot_output_file = os.path.join(args.plot_output_dir, f"{base_name}_{args.plot}.html")
                     fig.write_html(plot_output_file)
                     logger.info(f"Generated plot: {plot_output_file}")

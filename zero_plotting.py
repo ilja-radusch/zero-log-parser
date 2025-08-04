@@ -173,7 +173,7 @@ class ZeroLogPlotter:
         # Battery current (primary y-axis)
         fig.add_trace(
             go.Scatter(x=riding_data['timestamp'], y=riding_data['battery_current_amps'],
-                      name='Battery Current', line=dict(color='blue')),
+                      name='Battery Current', line=dict(color='blue'), connectgaps=False),
             secondary_y=False,
         )
         
@@ -181,7 +181,7 @@ class ZeroLogPlotter:
         if 'motor_current_amps' in riding_data.columns:
             fig.add_trace(
                 go.Scatter(x=riding_data['timestamp'], y=riding_data['motor_current_amps'],
-                          name='Motor Current', line=dict(color='red')),
+                          name='Motor Current', line=dict(color='red'), connectgaps=False),
                 secondary_y=True,
             )
         
@@ -193,41 +193,72 @@ class ZeroLogPlotter:
         return fig
     
     def plot_thermal_management(self) -> Figure:
-        """Plot temperature data over time."""
+        """Plot temperature deltas relative to ambient temperature."""
         riding_data = self.data['mbb_riding']
-        disarmed_data = self.data['mbb_disarmed']
         
-        # Combine riding and disarmed data
-        temp_data = pd.concat([riding_data, disarmed_data]).sort_values('timestamp')
+        # Only use riding data to show gaps when motorcycle is off
+        temp_data = riding_data.sort_values('timestamp')
         
         if temp_data.empty:
             return go.Figure().add_annotation(text="No temperature data available",
                                             xref="paper", yref="paper", x=0.5, y=0.5)
         
+        # Check if ambient temperature is available
+        if 'ambient_temp_celsius' not in temp_data.columns:
+            return go.Figure().add_annotation(text="No ambient temperature data available for delta calculation",
+                                            xref="paper", yref="paper", x=0.5, y=0.5)
+        
         fig = go.Figure()
         
+        # Add zero line for ambient temperature baseline
+        fig.add_hline(y=0, line_dash="dash", line_color="gray", 
+                     annotation_text="Ambient Temperature (Baseline)")
+        
+        # Calculate temperature deltas relative to ambient
         temp_columns = [
-            ('motor_temp_celsius', 'Motor Temperature', '#ff7f0e'),
-            ('controller_temp_celsius', 'Controller Temperature', '#2ca02c'),
-            ('pack_temp_high_celsius', 'Pack High Temperature', '#d62728'),
-            ('ambient_temp_celsius', 'Ambient Temperature', '#9467bd')
+            ('motor_temp_celsius', 'Motor Δ Temperature', '#ff7f0e'),
+            ('controller_temp_celsius', 'Controller Δ Temperature', '#2ca02c'),
+            ('pack_temp_high_celsius', 'Pack High Δ Temperature', '#d62728')
         ]
         
         for col, name, color in temp_columns:
             if col in temp_data.columns:
+                # Calculate delta from ambient temperature
+                delta_temp = temp_data[col] - temp_data['ambient_temp_celsius']
+                
                 fig.add_trace(go.Scatter(
                     x=temp_data['timestamp'],
-                    y=temp_data[col],
+                    y=delta_temp,
                     mode='lines',
                     name=name,
-                    line=dict(color=color)
+                    line=dict(color=color),
+                    connectgaps=False,  # Show gaps when motorcycle is off
+                    customdata=list(zip(temp_data[col], temp_data['ambient_temp_celsius'])),
+                    hovertemplate='<b>%{fullData.name}</b><br>' +
+                                'Time: %{x}<br>' +
+                                'Δ Temperature: %{y:.1f}°C<br>' +
+                                'Absolute: %{customdata[0]:.1f}°C<br>' +
+                                'Ambient: %{customdata[1]:.1f}°C<br>' +
+                                '<extra></extra>'
                 ))
         
         fig.update_layout(
-            title='Thermal Management',
+            title='Thermal Management - Temperature Deltas from Ambient',
             xaxis_title='Time',
-            yaxis_title='Temperature (°C)',
-            hovermode='x unified'
+            yaxis_title='Temperature Delta (°C above ambient)',
+            hovermode='x unified',
+            annotations=[
+                dict(
+                    text="Positive values indicate temperature above ambient<br>Zero line represents ambient temperature",
+                    x=0.02, y=0.98,
+                    xref="paper", yref="paper",
+                    showarrow=False,
+                    font=dict(size=10),
+                    bgcolor="rgba(255,255,255,0.8)",
+                    bordercolor="gray",
+                    borderwidth=1
+                )
+            ]
         )
         
         return fig
@@ -446,6 +477,14 @@ class ZeroLogPlotter:
         """Generate all available plots and save as HTML files."""
         if not PLOTLY_AVAILABLE:
             print("Error: plotly is required for plotting. Install with: pip install plotly")
+            return
+        
+        # Create output directory if it doesn't exist
+        import os
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except OSError as e:
+            print(f"Error creating output directory '{output_dir}': {e}")
             return
         
         plots = {
