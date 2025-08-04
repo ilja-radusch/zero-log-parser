@@ -7,6 +7,7 @@ This tool parses binary-encoded event logs from Zero Motorcycles' main bike boar
 ## Features
 
 - **Multiple Output Formats**: Text, CSV, TSV, and JSON
+- **Interactive Data Visualization**: Generate rich HTML plots for data analysis
 - **Structured Data Extraction**: Automatically converts telemetry data to structured JSON format
 - **Timezone Support**: Configurable timezone handling with system default
 - **Modern Python Package**: Built for Python 3.10+ with type hints and modern packaging
@@ -41,6 +42,7 @@ pip install -e ".[dev]"
 
 - Python 3.10 or higher
 - No external dependencies (uses only Python standard library)
+- Optional: `plotly` and `pandas` for interactive plotting features
 
 ## Usage
 
@@ -85,6 +87,31 @@ zero-log-parser logfile.bin --verbose
 
 # Short alias
 zlp logfile.bin -f json -o structured_data.json
+```
+
+#### Interactive Plotting
+
+Generate rich HTML visualizations of your motorcycle data:
+
+```bash
+# Install plotting dependencies
+pip install plotly pandas
+
+# Generate all available plots
+zero-log-parser logfile.bin --plot all
+
+# Generate specific plot types
+zero-log-parser logfile.bin --plot battery      # Battery SOC and health
+zero-log-parser logfile.bin --plot power       # Power consumption analysis
+zero-log-parser logfile.bin --plot range       # Range estimation and efficiency
+zero-log-parser logfile.bin --plot performance # RPM vs efficiency analysis
+zero-log-parser logfile.bin --plot thermal     # Temperature monitoring
+zero-log-parser logfile.bin --plot voltage     # Voltage analysis
+zero-log-parser logfile.bin --plot charging    # Charging session analysis
+zero-log-parser logfile.bin --plot balance     # Cell balance health
+
+# Specify output directory for HTML plots
+zero-log-parser logfile.bin --plot all --plot-output-dir ./plots
 ```
 
 #### Help
@@ -179,6 +206,40 @@ The parser automatically detects and converts various message types to structure
 - **Charging/Riding Status**: Comprehensive telemetry during operation
 - **Tipover Detection**: Sensor data with roll/pitch measurements
 - **Error Conditions**: Structured fault and diagnostic information
+
+## Data Visualization
+
+The plotting feature provides comprehensive analysis capabilities:
+
+### Range Analysis (`--plot range`)
+Analyze riding efficiency and range estimation:
+- Energy consumption rate (Wh/mile or Wh/km) over time
+- Remaining range estimates based on current battery SOC and consumption history
+- Speed vs efficiency correlation to identify optimal riding speeds
+- Trip segment analysis showing consumption patterns for different riding conditions
+
+### Performance vs Efficiency (`--plot performance`)
+Correlate motor performance with energy efficiency:
+- RPM vs power consumption scatter plots to identify efficient operating ranges
+- Motor efficiency curves showing optimal RPM bands for different power levels
+- Speed vs energy consumption analysis for performance tuning
+- Torque delivery efficiency across different riding scenarios
+
+### Battery Health Monitoring (`--plot battery`)
+Comprehensive battery state tracking:
+- State of Charge (SOC) progression over ride sessions
+- Battery voltage curves under load and at rest
+- Temperature impact on battery performance
+- Charge/discharge cycle analysis for battery health assessment
+
+### Power Analysis (`--plot power`)
+Detailed energy usage pattern analysis:
+- Real-time power draw visualization with regenerative braking events
+- Acceleration vs consumption correlation for riding style analysis
+- Peak power events and their impact on overall efficiency
+- Power distribution analysis across different riding modes
+
+**Example Output**: All plots are generated as interactive HTML files that can be opened in any web browser, featuring zoom, pan, and hover capabilities for detailed data exploration.
 
 ## Development
 

@@ -47,7 +47,8 @@ def main() -> int:
     try:
         # Check if plotting dependencies are available
         try:
-            from .plotting import ZeroLogPlotter
+            from . import _get_plotter_class
+            ZeroLogPlotter = _get_plotter_class()
         except ImportError:
             print("Error: plotly and pandas are required for plotting.", file=sys.stderr)
             print("Install with: pip install -e \".[plotting]\"", file=sys.stderr)

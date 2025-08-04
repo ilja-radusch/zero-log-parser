@@ -148,7 +148,8 @@ def main() -> int:
         # Generate plots if requested
         if args.plot:
             try:
-                from .plotting import ZeroLogPlotter
+                from . import _get_plotter_class
+                ZeroLogPlotter = _get_plotter_class()
                 
                 # Use the generated output file or convert bin to CSV for plotting
                 plot_input_file = args.input_file
