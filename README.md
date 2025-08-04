@@ -19,7 +19,11 @@ This tool parses binary-encoded event logs from Zero Motorcycles' main bike boar
 ### From PyPI (recommended)
 
 ```bash
+# Basic installation
 pip install zero-log-parser
+
+# With plotting dependencies
+pip install zero-log-parser[plotting]
 ```
 
 ### From Source
@@ -27,7 +31,12 @@ pip install zero-log-parser
 ```bash
 git clone https://github.com/ilja-radusch/zero-log-parser.git
 cd zero-log-parser
+
+# Basic installation
 pip install -e .
+
+# With plotting dependencies
+pip install -e ".[plotting]"
 ```
 
 ### For Development
@@ -58,7 +67,9 @@ You can extract logs from your Zero motorcycle using the [Zero mobile app](http:
 
 ### Command Line Interface
 
-The package provides two CLI commands: `zero-log-parser` and `zlp` (short alias).
+The package provides multiple CLI commands: `zero-log-parser` and `zlp` (short alias) for parsing, and `zero-plotting` for interactive visualizations.
+
+**Note**: Interactive plotting is available through the `zero-plotting` command. The main CLI (`zero-log-parser`/`zlp`) and standalone script (`zero_log_parser.py`) provide parsing functionality only.
 
 #### Basic Usage
 
@@ -91,27 +102,28 @@ zlp logfile.bin -f json -o structured_data.json
 
 #### Interactive Plotting
 
-Generate rich HTML visualizations of your motorcycle data:
+Generate rich HTML visualizations of your motorcycle data using the `zero-plotting` command:
 
 ```bash
-# Install plotting dependencies
-pip install plotly pandas
+# Make sure you have plotting dependencies installed
+# Either: pip install zero-log-parser[plotting]
+# Or: pip install plotly pandas
 
 # Generate all available plots
-zero-log-parser logfile.bin --plot all
+zero-plotting logfile.bin --plot all
 
 # Generate specific plot types
-zero-log-parser logfile.bin --plot battery      # Battery SOC and health
-zero-log-parser logfile.bin --plot power       # Power consumption analysis
-zero-log-parser logfile.bin --plot range       # Range estimation and efficiency
-zero-log-parser logfile.bin --plot performance # RPM vs efficiency analysis
-zero-log-parser logfile.bin --plot thermal     # Temperature monitoring
-zero-log-parser logfile.bin --plot voltage     # Voltage analysis
-zero-log-parser logfile.bin --plot charging    # Charging session analysis
-zero-log-parser logfile.bin --plot balance     # Cell balance health
+zero-plotting logfile.bin --plot battery      # Battery SOC and health
+zero-plotting logfile.bin --plot power       # Power consumption analysis
+zero-plotting logfile.bin --plot range       # Range estimation and efficiency
+zero-plotting logfile.bin --plot performance # RPM vs efficiency analysis
+zero-plotting logfile.bin --plot thermal     # Temperature monitoring
+zero-plotting logfile.bin --plot voltage     # Voltage analysis
+zero-plotting logfile.bin --plot charging    # Charging session analysis
+zero-plotting logfile.bin --plot balance     # Cell balance health
 
 # Specify output directory for HTML plots
-zero-log-parser logfile.bin --plot all --plot-output-dir ./plots
+zero-plotting logfile.bin --plot all --plot-output-dir ./plots
 ```
 
 #### Help
