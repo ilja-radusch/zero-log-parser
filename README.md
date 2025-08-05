@@ -109,7 +109,7 @@ Generate rich HTML visualizations of your motorcycle data using the `zero-plotti
 # Either: pip install zero-log-parser[plotting]
 # Or: pip install plotly pandas
 
-# Generate all available plots
+# Generate all available plots from a single file
 zero-plotting logfile.bin --plot all
 
 # Generate specific plot types
@@ -122,15 +122,29 @@ zero-plotting logfile.bin --plot voltage     # Voltage analysis
 zero-plotting logfile.bin --plot charging    # Charging session & recuperation analysis
 zero-plotting logfile.bin --plot balance     # Cell balance health
 
-# Specify output directory for HTML plots
-zero-plotting logfile.bin --plot all --plot-output-dir ./plots
+# Plot data from multiple log files (merged automatically)
+zero-plotting file1.bin file2.bin file3.bin --plot all
+zero-plotting *.bin --plot battery          # Use shell expansion for multiple files
+zero-plotting logs/*.bin --plot thermal     # Plot from all .bin files in directory
 
-# Time filtering examples
+# Specify output directory for HTML plots
+zero-plotting logfile.bin --plot all --output-dir ./plots
+
+# Time filtering examples (works with single or multiple files)
 zero-plotting logfile.bin --plot thermal --start "last month"
-zero-plotting logfile.bin --plot battery --start "June 2025" --end "July 2025"
-zero-plotting logfile.bin --plot power --start "2025-06-15" --end "2025-06-20"
-zero-plotting logfile.bin --plot range --start "last 30 days"
+zero-plotting file1.bin file2.bin --plot battery --start "June 2025" --end "July 2025"
+zero-plotting *.bin --plot power --start "2025-06-15" --end "2025-06-20"
+zero-plotting logs/*.bin --plot range --start "last 30 days"
 ```
+
+**Multiple File Support:**
+- All input files must be the same type (.bin or .csv)
+- Files are merged intelligently with duplicate removal using LogData operators
+- VIN compatibility is checked (warning shown for mismatches, force-merge if needed)
+- Merged plots are named using VIN, log type and latest date: `VIN_LOGTYPE_YYYY-MM-DD_plottype.html`
+- Log type prefixes: `MBB` (Main Bike Board), `BMS` (Battery Management System), `BMS+MBB` (both)
+- Time filtering is applied after merging
+- Fallback naming: `VIN_LOGTYPE_merged_plottype.html` (if date extraction fails)
 
 #### Time Filtering
 

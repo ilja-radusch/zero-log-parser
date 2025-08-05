@@ -15,8 +15,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument(
-        'input_file',
-        help="Input file (.bin or .csv)"
+        'input_files',
+        nargs='+',
+        help="Input file(s) (.bin or .csv). Multiple files will be merged before plotting."
     )
     
     parser.add_argument(
@@ -55,6 +56,10 @@ def create_parser() -> argparse.ArgumentParser:
 def main() -> int:
     """Main entry point for the plotting CLI."""
     try:
+        # Parse command line arguments first (for --help)
+        parser = create_parser()
+        args = parser.parse_args()
+        
         # Check if plotting dependencies are available
         try:
             from . import _get_plotter_class
@@ -63,10 +68,6 @@ def main() -> int:
             print("Error: plotly and pandas are required for plotting.", file=sys.stderr)
             print("Install with: pip install -e \".[plotting]\"", file=sys.stderr)
             return 1
-        
-        # Parse command line arguments
-        parser = create_parser()
-        args = parser.parse_args()
         
         # Parse time filters
         start_time = None
@@ -92,7 +93,13 @@ def main() -> int:
                     return 1
         
         # Create plotter and generate plots
-        plotter = ZeroLogPlotter(args.input_file, start_time=start_time, end_time=end_time)
+        if len(args.input_files) == 1:
+            # Single file - use existing logic
+            plotter = ZeroLogPlotter(args.input_files[0], start_time=start_time, end_time=end_time)
+        else:
+            # Multiple files - merge and then plot
+            print(f"Merging {len(args.input_files)} log files...")
+            plotter = ZeroLogPlotter.from_multiple_files(args.input_files, start_time=start_time, end_time=end_time)
         
         if args.plot == 'all':
             plotter.generate_all_plots(args.output_dir)
@@ -111,7 +118,14 @@ def main() -> int:
             
             fig = plot_methods[args.plot]()
             import os
-            base_name = os.path.splitext(os.path.basename(args.input_file))[0]
+            
+            # Generate base name from multiple files
+            if len(args.input_files) == 1:
+                base_name = os.path.splitext(os.path.basename(args.input_files[0]))[0]
+            else:
+                # Use meaningful name from plotter (VIN + date)
+                base_name = os.path.splitext(os.path.basename(plotter.input_file))[0]
+            
             output_file = os.path.join(args.output_dir, f"{base_name}_{args.plot}.html")
             fig.write_html(output_file)
             print(f"Generated: {output_file}")

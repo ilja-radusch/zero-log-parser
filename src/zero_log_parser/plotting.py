@@ -26,7 +26,7 @@ except ImportError:
     class Figure:
         pass
 
-from .core import parse_log
+from .core import parse_log, LogData, LogFile, MismatchingVinError
 
 
 class ZeroLogPlotter:
@@ -43,6 +43,338 @@ class ZeroLogPlotter:
         self.data = {}
         self.file_type = self._detect_file_type()
         self._load_data()
+
+    @classmethod
+    def from_multiple_files(cls, input_files: List[str], start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None):
+        """Create plotter from multiple log files by merging them first."""
+        if not PLOTLY_AVAILABLE:
+            raise ImportError("plotly and pandas are required for plotting. Install with: pip install -e \".[plotting]\"")
+        
+        if not input_files:
+            raise ValueError("At least one input file must be provided")
+        
+        if len(input_files) == 1:
+            return cls(input_files[0], start_time=start_time, end_time=end_time)
+        
+        # Check if all files are the same type
+        file_types = set()
+        for file_path in input_files:
+            if file_path.endswith('.bin'):
+                file_types.add('binary')
+            elif file_path.endswith('.csv'):
+                file_types.add('csv')
+            else:
+                raise ValueError(f"Unsupported file type: {file_path}")
+        
+        if len(file_types) > 1:
+            raise ValueError("All input files must be the same type (.bin or .csv)")
+        
+        file_type = file_types.pop()
+        
+        # Always use LogData merging for intelligent duplicate removal
+        # Convert CSV files to LogData objects first if needed
+        return cls._merge_using_logdata(input_files, file_type, start_time=start_time, end_time=end_time)
+
+    @classmethod
+    def _merge_using_logdata(cls, input_files: List[str], file_type: str, start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None):
+        """Merge multiple files using LogData merge functionality for intelligent duplicate removal."""
+        print(f"Loading and merging {len(input_files)} files using LogData merge operators...")
+        
+        try:
+            log_data_objects = []
+            log_file_types = set()  # Track what types of logs we have
+            
+            for i, input_file in enumerate(input_files):
+                print(f"Loading file {i+1}/{len(input_files)}: {os.path.basename(input_file)}")
+                
+                if file_type == 'binary':
+                    # Load binary file directly
+                    log_file = LogFile(input_file)
+                    log_data = LogData(log_file)
+                    
+                    # Track log file type for basename generation
+                    if log_file.is_mbb():
+                        log_file_types.add('MBB')
+                    elif log_file.is_bms():
+                        log_file_types.add('BMS')
+                    else:
+                        log_file_types.add('Unknown')
+                        
+                else:
+                    # For CSV files, we need to convert back to binary LogData
+                    # This ensures we get the smart duplicate detection from LogData merge
+                    print(f"  Note: CSV files will be processed through LogData for intelligent merging")
+                    
+                    # For now, skip CSV->LogData conversion as it's complex
+                    # Fall back to simple DataFrame merging for CSV files
+                    if i == 0:
+                        print("  Warning: CSV file merging uses simpler duplicate detection")
+                        return cls._merge_csv_files_simple(input_files, start_time=start_time, end_time=end_time)
+                
+                log_data_objects.append(log_data)
+            
+            # Use the LogData merge operators for intelligent merging
+            print("Merging log data using LogData + operators...")
+            try:
+                # This uses the sophisticated merge logic with smart duplicate detection
+                merged_log_data = sum(log_data_objects)
+                print(f"✓ Successfully merged {len(input_files)} files using LogData operators")
+                print(f"  Total entries: {merged_log_data.entries_count}")
+                print(f"  VIN: {merged_log_data._get_vin()}")
+                
+            except MismatchingVinError as e:
+                print(f"Warning: VIN mismatch detected: {e}")
+                print("Proceeding with merge anyway (files may be from different motorcycles)")
+                
+                # Force merge by temporarily making VINs compatible
+                for log_data in log_data_objects[1:]:
+                    log_data.header_info['VIN'] = log_data_objects[0].header_info.get('VIN', 'Unknown')
+                
+                merged_log_data = sum(log_data_objects)
+                print(f"✓ Force-merged {len(input_files)} files with VIN override")
+                
+            # Convert merged LogData to CSV for plotting
+            temp_csv = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+            temp_csv.close()
+            
+            print("Converting merged LogData to CSV for plotting...")
+            merged_log_data.emit_tabular_decoding(temp_csv.name, out_format='csv')
+            
+            # Create plotter instance with merged CSV
+            plotter = cls(temp_csv.name, start_time=start_time, end_time=end_time)
+            
+            # Generate meaningful filename from VIN, log types, and latest date
+            base_name = cls._generate_merged_basename(merged_log_data, temp_csv.name, log_file_types)
+            plotter.input_file = base_name
+            
+            return plotter
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to merge files using LogData: {e}")
+    
+    @classmethod
+    def _merge_csv_files_simple(cls, csv_files: List[str], start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None):
+        """Simple CSV file merging (fallback when LogData conversion is not available)."""
+        temp_csv = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        temp_csv.close()
+        
+        try:
+            print("Using simple CSV merging (timestamp-based duplicate removal only)")
+            
+            # Read and combine all CSV files
+            combined_dfs = []
+            for csv_file in csv_files:
+                df = pd.read_csv(csv_file, sep=';')
+                df['source_file'] = os.path.basename(csv_file)
+                combined_dfs.append(df)
+            
+            # Merge DataFrames
+            merged_df = pd.concat(combined_dfs, ignore_index=True)
+            
+            # Sort by timestamp if available
+            if 'timestamp' in merged_df.columns:
+                merged_df['timestamp'] = pd.to_datetime(merged_df['timestamp'])
+                merged_df = merged_df.sort_values('timestamp')
+            
+            # Remove duplicates based on timestamp and message content
+            duplicate_cols = ['timestamp', 'message']
+            if 'conditions' in merged_df.columns:
+                duplicate_cols.append('conditions')
+            
+            initial_count = len(merged_df)
+            merged_df = merged_df.drop_duplicates(subset=duplicate_cols, keep='first')
+            removed_count = initial_count - len(merged_df)
+            
+            print(f"Removed {removed_count} duplicate entries during CSV merge")
+            
+            # Write merged CSV
+            merged_df.to_csv(temp_csv.name, sep=';', index=False)
+            
+            # Create plotter instance
+            plotter = cls(temp_csv.name, start_time=start_time, end_time=end_time)
+            
+            # Generate meaningful filename from CSV data
+            base_name = cls._generate_csv_merged_basename(merged_df, len(csv_files))
+            plotter.input_file = base_name
+            
+            return plotter
+            
+        except Exception as e:
+            if os.path.exists(temp_csv.name):
+                os.unlink(temp_csv.name)
+            raise
+
+    @classmethod
+    def _generate_merged_basename(cls, merged_log_data, csv_file_path: str, log_file_types: set) -> str:
+        """Generate meaningful basename from log types, VIN and latest date in merged LogData."""
+        try:
+            # Generate log type prefix
+            log_prefix = cls._generate_log_type_prefix(log_file_types)
+            
+            # Get VIN from merged LogData
+            vin = merged_log_data._get_vin()
+            if vin == 'Unknown':
+                vin = 'UnknownVIN'
+            else:
+                # Clean VIN for filename use (remove invalid characters)
+                vin = ''.join(c for c in vin if c.isalnum() or c in '-_')
+            
+            # Find latest date by reading the generated CSV
+            latest_date = cls._extract_latest_date_from_csv(csv_file_path)
+            
+            if latest_date:
+                return f"{vin}_{log_prefix}_{latest_date}"
+            else:
+                return f"{vin}_{log_prefix}_merged"
+                
+        except Exception as e:
+            print(f"Warning: Could not generate VIN-based filename: {e}")
+            return "merged_data"
+
+    @classmethod
+    def _generate_log_type_prefix(cls, log_file_types: set) -> str:
+        """Generate log type prefix from set of log types."""
+        # Remove 'Unknown' if we have other types
+        valid_types = {t for t in log_file_types if t != 'Unknown'}
+        if valid_types:
+            log_file_types = valid_types
+        
+        # Sort for consistent ordering
+        sorted_types = sorted(log_file_types)
+        
+        if len(sorted_types) == 0:
+            return "Unknown"
+        elif len(sorted_types) == 1:
+            return sorted_types[0]
+        else:
+            # Multiple types: combine them
+            return "+".join(sorted_types)
+    
+    @classmethod
+    def _generate_csv_merged_basename(cls, merged_df, file_count: int) -> str:
+        """Generate meaningful basename from CSV DataFrame."""
+        try:
+            # Detect log types from message content
+            log_file_types = cls._detect_log_types_from_csv(merged_df)
+            log_prefix = cls._generate_log_type_prefix(log_file_types)
+            
+            # Try to extract VIN from the data (might be in conditions or other fields)
+            vin = "UnknownVIN"
+            
+            # Look for VIN in various possible columns/fields
+            if 'conditions' in merged_df.columns:
+                for _, row in merged_df.iterrows():
+                    conditions_str = str(row.get('conditions', ''))
+                    if 'VIN' in conditions_str and len(conditions_str) > 10:
+                        # Try to extract VIN from JSON conditions
+                        try:
+                            import json
+                            conditions = json.loads(conditions_str)
+                            if 'VIN' in conditions:
+                                vin = conditions['VIN']
+                                break
+                        except:
+                            pass
+            
+            # Clean VIN for filename
+            vin = ''.join(c for c in vin if c.isalnum() or c in '-_')
+            
+            # Extract latest date from timestamp column
+            latest_date = None
+            if 'timestamp' in merged_df.columns:
+                try:
+                    timestamps = pd.to_datetime(merged_df['timestamp'], errors='coerce')
+                    latest_timestamp = timestamps.max()
+                    if pd.notna(latest_timestamp):
+                        latest_date = latest_timestamp.strftime('%Y-%m-%d')
+                except:
+                    pass
+            
+            if latest_date:
+                return f"{vin}_{log_prefix}_{latest_date}.csv"
+            else:
+                return f"{vin}_{log_prefix}_merged_{file_count}files.csv"
+                
+        except Exception as e:
+            print(f"Warning: Could not generate meaningful CSV filename: {e}")
+            return f"merged_{file_count}files.csv"
+
+    @classmethod
+    def _detect_log_types_from_csv(cls, merged_df) -> set:
+        """Detect log types (MBB/BMS) from CSV message content."""
+        log_types = set()
+        
+        if 'message' not in merged_df.columns:
+            return {'Unknown'}
+        
+        # Sample some messages to determine log type
+        messages = merged_df['message'].dropna().unique()[:50]  # Check first 50 unique messages
+        
+        # MBB-specific message patterns
+        mbb_indicators = [
+            'Riding', 'Disarmed', 'Board status', 'Key state', 'Motor', 'Speed',
+            'Battery current', 'RPM', 'Temperature', 'Voltage', 'Power'
+        ]
+        
+        # BMS-specific message patterns  
+        bms_indicators = [
+            'Discharge level', 'SOC Data', 'Charge', 'Cell', 'Pack', 'Balance',
+            'Isolation', 'Contactor', 'Current sensor', 'BMS'
+        ]
+        
+        mbb_score = 0
+        bms_score = 0
+        
+        for message in messages:
+            message_str = str(message).lower()
+            
+            # Check for MBB indicators
+            for indicator in mbb_indicators:
+                if indicator.lower() in message_str:
+                    mbb_score += 1
+                    break
+                    
+            # Check for BMS indicators
+            for indicator in bms_indicators:
+                if indicator.lower() in message_str:
+                    bms_score += 1
+                    break
+        
+        # Determine log types based on scores
+        if mbb_score > 0:
+            log_types.add('MBB')
+        if bms_score > 0:
+            log_types.add('BMS')
+            
+        # If no clear indicators, return Unknown
+        if not log_types:
+            log_types.add('Unknown')
+            
+        return log_types
+    
+    @classmethod
+    def _extract_latest_date_from_csv(cls, csv_file_path: str) -> str:
+        """Extract the latest date from a CSV file's timestamp column."""
+        try:
+            # Read just the timestamp column to find latest date
+            df = pd.read_csv(csv_file_path, sep=';', usecols=['timestamp'], nrows=1000)
+            
+            if len(df) == 0:
+                return None
+                
+            # Convert to datetime and find max
+            timestamps = pd.to_datetime(df['timestamp'], errors='coerce')
+            valid_timestamps = timestamps.dropna()
+            
+            if len(valid_timestamps) == 0:
+                return None
+                
+            latest_timestamp = valid_timestamps.max() 
+            return latest_timestamp.strftime('%Y-%m-%d')
+            
+        except Exception as e:
+            print(f"Warning: Could not extract latest date from CSV: {e}")
+            return None
     
     def _detect_file_type(self) -> str:
         """Detect if input is binary or CSV file."""
@@ -297,16 +629,26 @@ class ZeroLogPlotter:
         return fig
     
     def plot_voltage_analysis(self) -> Figure:
-        """Plot voltage analysis over time."""
+        """Plot voltage analysis over time with separate pack and cell voltage graphs."""
         bms_data = self.data['bms_soc']
+        bms_discharge_data = self.data['bms_discharge']
         riding_data = self.data['mbb_riding']
+        disarmed_data = self.data['mbb_disarmed']
         
         # Combine data sources
         voltage_data = []
+        
+        # Add BMS data (has pack_voltage_volts and cell voltages)
         if not bms_data.empty:
             voltage_data.append(bms_data)
+        if not bms_discharge_data.empty:
+            voltage_data.append(bms_discharge_data)
+            
+        # Add MBB data (has pack_voltage_volts)
         if not riding_data.empty and 'pack_voltage_volts' in riding_data.columns:
             voltage_data.append(riding_data)
+        if not disarmed_data.empty and 'pack_voltage_volts' in disarmed_data.columns:
+            voltage_data.append(disarmed_data)
         
         if not voltage_data:
             return go.Figure().add_annotation(text="No voltage data available",
@@ -314,9 +656,15 @@ class ZeroLogPlotter:
         
         combined_data = self._insert_gaps_for_temporal_breaks(pd.concat(voltage_data).sort_values('timestamp'))
         
-        fig = go.Figure()
+        # Create subplots: Pack voltage on top, Cell voltages on bottom
+        fig = make_subplots(
+            rows=2, cols=1,
+            subplot_titles=('Pack Voltage', 'Cell Voltages'),
+            vertical_spacing=0.1,
+            shared_xaxes=True
+        )
         
-        # Pack voltage
+        # Pack voltage subplot (row 1)
         if 'pack_voltage_volts' in combined_data.columns:
             fig.add_trace(go.Scatter(
                 x=combined_data['timestamp'],
@@ -325,11 +673,34 @@ class ZeroLogPlotter:
                 name='Pack Voltage',
                 line=dict(color='blue'),
                 connectgaps=False
-            ))
+            ), row=1, col=1)
         
-        # Min/Max cell voltages from BMS data
-        if 'voltage_max' in combined_data.columns and 'voltage_min_1' in combined_data.columns:
-            # Convert mV to V
+        # Cell voltage subplot (row 2) - use standardized volt fields if available
+        if 'voltage_max_volts' in combined_data.columns and 'voltage_min_1_volts' in combined_data.columns:
+            # Use pre-converted volt values
+            fig.add_trace(go.Scatter(
+                x=combined_data['timestamp'],
+                y=combined_data['voltage_max_volts'],
+                mode='lines',
+                name='Max Cell Voltage',
+                line=dict(color='red', dash='dash'),
+                connectgaps=False
+            ), row=2, col=1)
+            
+            fig.add_trace(go.Scatter(
+                x=combined_data['timestamp'], 
+                y=combined_data['voltage_min_1_volts'],
+                mode='lines',
+                name='Min Cell Voltage',
+                line=dict(color='orange', dash='dash'),
+                fill='tonexty',
+                fillcolor='rgba(255,165,0,0.2)',
+                connectgaps=False
+            ), row=2, col=1)
+        
+        # Fallback to millivolt fields if volt fields not available (backward compatibility)
+        elif 'voltage_max' in combined_data.columns and 'voltage_min_1' in combined_data.columns:
+            # Convert mV to V (fallback for older data)
             voltage_max_v = combined_data['voltage_max'] / 1000
             voltage_min_v = combined_data['voltage_min_1'] / 1000
             
@@ -340,7 +711,7 @@ class ZeroLogPlotter:
                 name='Max Cell Voltage',
                 line=dict(color='red', dash='dash'),
                 connectgaps=False
-            ))
+            ), row=2, col=1)
             
             fig.add_trace(go.Scatter(
                 x=combined_data['timestamp'],
@@ -351,14 +722,19 @@ class ZeroLogPlotter:
                 fill='tonexty',
                 fillcolor='rgba(255,165,0,0.2)',
                 connectgaps=False
-            ))
+            ), row=2, col=1)
         
+        # Update layout
         fig.update_layout(
             title='Voltage Analysis',
-            xaxis_title='Time',
-            yaxis_title='Voltage (V)',
+            height=800,  # Taller for two subplots
             hovermode='x unified'
         )
+        
+        # Update axes labels
+        fig.update_xaxes(title_text='Time', row=2, col=1)
+        fig.update_yaxes(title_text='Voltage (V)', row=1, col=1)
+        fig.update_yaxes(title_text='Voltage (V)', row=2, col=1)
         
         return fig
     
@@ -603,3 +979,4 @@ class ZeroLogPlotter:
                 print(f"Generated: {output_file}")
             except Exception as e:
                 print(f"Error generating {plot_name}: {e}")
+

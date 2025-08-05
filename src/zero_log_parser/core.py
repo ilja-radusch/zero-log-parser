@@ -41,6 +41,9 @@ REV3 = _standalone.REV3
 is_vin = _standalone.is_vin
 get_local_timezone_offset = _standalone.get_local_timezone_offset
 
+# Export exceptions
+MismatchingVinError = _standalone.MismatchingVinError
+
 
 def parse_log(log_file: str, output_file: str, utc_offset_hours: float = None,
               verbose: bool = False, logger=None, output_format: str = 'txt'):
