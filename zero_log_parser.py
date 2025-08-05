@@ -305,6 +305,58 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         }
                         improved_conditions = json.dumps(json_data)
         
+        # Handle abbreviated hex patterns from new format (2025+)
+        elif re.match(r'^0x[0-9a-f]+(\s+0x[0-9a-f]+)*$', improved_event or '', re.IGNORECASE):
+            # Parse hex pattern like "0x28 0x02" or "0x01"
+            hex_parts = improved_event.split()
+            if len(hex_parts) >= 1:
+                try:
+                    main_type = int(hex_parts[0], 16)
+                    type_desc = cls.get_message_type_description(main_type)
+                    
+                    # Handle specific abbreviated patterns
+                    if main_type == 0x28:  # Battery CAN Link Up
+                        if len(hex_parts) >= 2:
+                            module_num = int(hex_parts[1], 16)
+                            improved_event = f"Battery CAN Link Up"
+                            improved_conditions = f"Module {module_num:02d}"
+                        else:
+                            improved_event = type_desc
+                            improved_conditions = "No module specified"
+                    elif main_type == 0x29:  # Battery CAN Link Down  
+                        if len(hex_parts) >= 2:
+                            module_num = int(hex_parts[1], 16)
+                            improved_event = f"Battery CAN Link Down"
+                            improved_conditions = f"Module {module_num:02d}"
+                        else:
+                            improved_event = type_desc
+                            improved_conditions = "No module specified"
+                    elif main_type == 0x01:  # Board Status
+                        improved_event = "Board Status"
+                        if len(hex_parts) >= 2:
+                            status_val = int(hex_parts[1], 16)
+                            improved_conditions = f"Status: 0x{status_val:02x}"
+                        else:
+                            improved_conditions = "No additional data"
+                    elif main_type == 0x2c:  # Riding Status (abbreviated)
+                        improved_event = "Riding Status (abbreviated)"
+                        if len(hex_parts) >= 2:
+                            status_val = int(hex_parts[1], 16)
+                            improved_conditions = f"Status: 0x{status_val:02x}"
+                        else:
+                            improved_conditions = "No status data"
+                    else:
+                        # General case for other hex patterns
+                        improved_event = type_desc
+                        if len(hex_parts) > 1:
+                            data_parts = [f"0x{int(part, 16):02x}" for part in hex_parts[1:]]
+                            improved_conditions = f"Data: {' '.join(data_parts)}"
+                        else:
+                            improved_conditions = "No additional data"
+                except ValueError:
+                    # If hex conversion fails, leave as is
+                    pass
+
         # Handle Current Sensor Zeroed messages
         elif improved_event == 'Current Sensor Zeroed' and improved_conditions:
             sensor_match = re.match(
@@ -1529,7 +1581,9 @@ class Gen2:
             0x3d: "Battery Module Contactor Closed",
             0x3e: "Cell Voltages",
             0x51: "Vehicle State Telemetry",  # Type 81 (0x51)
+            0x52: "Unknown Type 82",          # Type 82 (0x52) - appears in new format  
             0x54: "Sensor Data",              # Type 84 (0x54)
+            0xfb: "System Information",       # Type 251 (0xfb)
             0xfd: "Debug String"
         }
         return descriptions.get(message_type, f"Unknown Type {message_type}")

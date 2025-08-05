@@ -4,17 +4,27 @@
 
 ## Format Variations
 
-This document describes two observed MBB log file formats:
+This document describes three observed MBB log file formats:
 
 ### Legacy Format (Original Documentation)
 - Static data at fixed addresses (0x200, 0x240, etc.)
 - Log sections with headers at predictable locations
 
-### Ring Buffer Format (Newer Files, e.g., 2024+ firmware)
+### Ring Buffer Format (2024 firmware)
 - File starts directly with log entries at offset 0x0000
 - No static data at documented addresses
 - Section headers located at end of file
 - File size: exactly 0x40000 bytes (262144 bytes)
+- Human-readable diagnostic messages ("Riding", "Key On", etc.)
+- Full message payloads with verbose descriptions
+
+### Compressed Telemetry Format (2025+ firmware)
+- File size: 131,200 bytes (exactly half of ring buffer format)
+- Linear dump structure without ring buffer headers
+- Structured telemetry data prioritized over human-readable messages
+- Compressed message encoding with abbreviated hex patterns
+- New message types: Vehicle State (Type 81), Sensor Data (Type 84)
+- Entry count: ~2,200 vs ~6,600 in ring buffer format
 
 ## Static addresses (Legacy Format Only)
 
@@ -26,9 +36,9 @@ Address    | Length | Contents
 0x0000027d | 2      | Board revision
 0x0000027f | 3      | Bike model (`SS`, `SR`, `DS`, 'FX')
 
-## Ring Buffer Format Layout
+## Ring Buffer Format Layout (2024 firmware)
 
-In newer log files (2024+ firmware), the structure is:
+In 2024 firmware log files, the structure is:
 
 Address    | Length | Contents
 ---------- | :----: | --------
@@ -39,6 +49,41 @@ Address    | Length | Contents
 0x0003C100 | 16+    | Event log section (0xa2a2a2a2 + header info)
 
 *Note: Addresses may vary between files. Section headers should be located by scanning for the 4-byte sequences.*
+
+## Compressed Telemetry Format Layout (2025+ firmware)
+
+The 2025+ firmware introduces a significantly different log structure optimized for telemetry collection:
+
+### Key Changes from Ring Buffer Format:
+- **File Size**: 131,200 bytes (exactly 50% of ring buffer format)
+- **Structure**: Linear entry dump without section headers
+- **Data Focus**: Structured JSON telemetry vs human-readable diagnostic text
+- **Message Density**: ~2,200 entries vs ~6,600 in ring buffer format
+- **Encoding**: Binary/hex abbreviated patterns vs full text descriptions
+
+### Message Type Evolution:
+The 2025+ format replaces verbose diagnostic messages with structured telemetry:
+
+**Ring Buffer Format (2024):**
+- 1,754× "Riding" entries with full vehicle state text
+- 264× "Module XX Opening Contactor" descriptive messages
+- 156× "Sevcon CAN Link Up" verbose diagnostics
+
+**Compressed Format (2025+):**
+- 151× Vehicle State Telemetry (Type 81) with JSON data
+- 152× Sensor Data (Type 84) with structured readings
+- 45× Abbreviated hex patterns (e.g., "0x2c 0x01", "0x28 0x02")
+
+### Abbreviated Message Patterns:
+The new format uses compressed hex identifiers instead of full text:
+
+Pattern | Count | Meaning | 2024 Equivalent
+--------|-------|---------|----------------
+`0x28 0x02` | 52× | Battery CAN Link Up, Module 02 | "Module 02 CAN Link Up"
+`0x01` | 124× | Board Status (abbreviated) | "Board Status"
+`0x2c 0x01` | 45× | Riding Status (compressed) | "Riding" (full telemetry)
+`0x7a 0x01` | 44× | Unknown MBB Type 122 | (New in 2025+)
+`0x58 0x15 0x01` | 35× | Unknown pattern | (New in 2025+)
 
 ## Log sections (located by header sequence)
 
@@ -432,25 +477,43 @@ Offset | Length | Contents
 0x38   | 2      | cell 28 mV
 
 ### `0x51` (Type 81) - Vehicle State Telemetry
-*Added in 2025+ firmware*
+*Added in 2025+ firmware - replaces periodic "Riding" entries*
+
+**Purpose**: Primary vehicle telemetry data collection (151 entries per log session)
 
 Offset | Length | Contents
 ------ | :----: | --------
 0x00   | 68     | Vehicle state telemetry data (68 bytes total)
 
 **Decoded structure (little-endian):**
-- Bytes 36-39: Vehicle state string ("TOP", "RUN", "STOP", "UN", etc.)
+- Bytes 36-39: Vehicle state string ("TOP", "RUN", "STOP", "UN", "STRT", "PWSU", etc.)
 - Bytes 0-3: Odometer reading (meters)
-- Bytes 4-7: SOC raw value
+- Bytes 4-7: SOC raw value (State of Charge)
 - Bytes 8-11: Ambient temperature raw value
 - Bytes 12-15: Temperature sensor 1 (°C)
 - Bytes 16-19: Temperature sensor 2 (°C)  
 - Bytes 20-23: Temperature sensor 3 (°C)
 - Bytes 24-27: Temperature sensor 4 (°C)
-- Remaining bytes: Additional telemetry values (under investigation)
+- Remaining bytes: Additional telemetry values (motor data, power readings)
+
+**Example JSON output:**
+```json
+{
+  "vehicle_state": "RUN",
+  "odometer_m": 688000,
+  "soc_raw": 426,
+  "ambient_temp_raw": 1966,
+  "temp_1": 23,
+  "temp_2": 24,
+  "temp_3": 24,
+  "temp_4": 22
+}
+```
 
 ### `0x54` (Type 84) - Sensor Data
-*Added in 2025+ firmware*
+*Added in 2025+ firmware - supplementary sensor telemetry*
+
+**Purpose**: Additional sensor readings and system status (152 entries per log session)
 
 Offset | Length | Contents
 ------ | :----: | --------
@@ -458,27 +521,105 @@ Offset | Length | Contents
 
 **Decoded structure (little-endian):**
 - Bytes 0-3: Odometer reading (meters)
-- Bytes 4-7: Sensor reading 1
-- Bytes 8-11: Sensor reading 2
-- Bytes 12-15: Sensor reading 3
-- Bytes 16-19: Sensor reading 4
+- Bytes 4-7: Sensor reading 1 (power/voltage related)
+- Bytes 8-11: Sensor reading 2 (system status)
+- Bytes 12-15: Sensor reading 3 (temperature/performance)
+- Bytes 16-19: Sensor reading 4 (motor/controller data)
 - Bytes 20-21: Status flags (uint16)
 
-### `0xfb` (Type 251) - System Information
-*Added in 2025+ firmware*
+**Example JSON output:**
+```json
+{
+  "odometer_m": 689000,
+  "sensor_1": 429,
+  "sensor_2": 4278583296,
+  "sensor_3": 4390911,
+  "sensor_4": 1739784192,
+  "status": 1
+}
+```
+
+### `0x52` (Type 82) - Unknown Type 82
+*Added in 2025+ firmware - frequently occurring entry*
+
+**Purpose**: Unknown structured data (20 entries per log session)
 
 Offset | Length | Contents
 ------ | :----: | --------
-0x00   | ~110   | System information including VIN, serial numbers, firmware versions
+0x00   | variable | Complex structured data with vehicle state and sensor information
 
-**Contains:**
-- MBB identifier
-- VIN number (17 characters)
-- Serial numbers
-- Firmware version strings
-- System configuration data
+**Observed patterns:**
+- Contains vehicle state strings ("RUN", "STOP")
+- Includes odometer and power readings
+- Mixed binary and text data
+- Requires further reverse engineering
+
+### `0xfb` (Type 251) - System Information
+*Added in 2025+ firmware - appears once per log session*
+
+**Purpose**: System identification and configuration data
+
+Offset | Length | Contents
+------ | :----: | --------
+0x00   | ~110   | System information block
+
+**Decoded contents:**
+- **MBB identifier**: "MBB" string at start
+- **VIN number**: 17-character vehicle identification (e.g., "538DZAZ81PCN25719")
+- **Serial numbers**: Multiple system component serials (e.g., "RKT2302023467")
+- **Firmware version**: Version strings (e.g., "40-08198")
+- **System configuration**: Hardware IDs and setup parameters
+- **Checksums**: Data integrity verification values
+
+**Example data extracted:**
+```
+VIN: 538DZAZ81PCN25719
+Serial: RKT2302023367
+Firmware: 40-08198
+System ID: 39e9c5ea1
+```
 
 ### `0xfd` - debug string
 Offset | Length     | Contents
 ------ | :--------: | --------
 0x00   | *variable* | message text (ascii)
+
+---
+
+## Format Detection and Parser Implementation Notes
+
+### Identifying Log Format Version:
+1. **File Size Check**:
+   - 262,144 bytes (0x40000) → Ring Buffer Format (2024)
+   - 131,200 bytes → Compressed Telemetry Format (2025+)
+   - Other sizes → Legacy Format
+
+2. **Header Pattern Detection**:
+   - Look for section headers (0xa0-0xa3) → Ring Buffer Format
+   - Starts with 0xb2 entries → Compressed Telemetry Format
+   - Static data at 0x200+ → Legacy Format
+
+3. **Message Type Indicators**:
+   - Presence of Type 81/84/251 → 2025+ firmware
+   - High frequency of "Riding" messages → 2024 firmware
+   - Static addresses populated → Legacy firmware
+
+### Parser Implementation Guidelines:
+
+**For 2025+ Compressed Format:**
+- Handle abbreviated hex patterns as valid message types
+- Implement JSON decoders for Type 81/84 structured data
+- Parse Type 251 for system identification
+- Process compressed message identifiers (0x28 0x02, etc.)
+- Expect lower entry count but higher data density
+
+**For 2024 Ring Buffer Format:**
+- Parse verbose diagnostic messages
+- Handle full "Riding" telemetry entries
+- Process section headers for data location
+- Expect higher entry count with descriptive text
+
+**Cross-Format Compatibility:**
+- The core entry structure (0xb2 header + length + type + timestamp) remains consistent
+- Message interpretation and payload structure varies significantly
+- Use format detection to select appropriate parsing logic
