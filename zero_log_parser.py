@@ -1416,6 +1416,64 @@ class Gen2:
                 module=BinaryTools.unpack('uint8', x, 0x0))
         }
 
+    @classmethod
+    def vehicle_state_telemetry(cls, x):
+        """Parse Type 81 (0x51) - Vehicle State Telemetry (68 bytes)"""
+        if len(x) < 68:
+            return cls.unhandled_entry_format(0x51, x)
+        
+        # Extract vehicle state string (bytes 36-39)
+        state_bytes = x[36:40]
+        state = state_bytes.rstrip(b'\x00').decode('ascii', errors='ignore')
+        
+        # Decode key telemetry values
+        odometer = BinaryTools.unpack('uint32', x, 0)      # Distance in meters
+        soc_raw = BinaryTools.unpack('uint32', x, 4)       # State of charge raw
+        ambient_temp = BinaryTools.unpack('uint32', x, 44)  # Temperature (millidegrees?)
+        temp1 = BinaryTools.unpack('uint32', x, 48)        # Temperature 1
+        temp2 = BinaryTools.unpack('uint32', x, 52)        # Temperature 2  
+        temp3 = BinaryTools.unpack('uint32', x, 56)        # Temperature 3
+        temp4 = BinaryTools.unpack('uint32', x, 60)        # Temperature 4
+
+        return {
+            'event': 'Vehicle State',
+            'conditions': json.dumps({
+                'vehicle_state': state,
+                'odometer_m': odometer,
+                'soc_raw': soc_raw, 
+                'ambient_temp_raw': ambient_temp,
+                'temp_1': temp1,
+                'temp_2': temp2,
+                'temp_3': temp3,
+                'temp_4': temp4
+            })
+        }
+
+    @classmethod  
+    def sensor_data(cls, x):
+        """Parse Type 84 (0x54) - Sensor Data (22 bytes)"""
+        if len(x) < 22:
+            return cls.unhandled_entry_format(0x54, x)
+            
+        # Decode sensor values
+        odometer = BinaryTools.unpack('uint32', x, 0)      # Distance in meters  
+        sensor1 = BinaryTools.unpack('uint32', x, 4)       # Sensor value 1
+        sensor2 = BinaryTools.unpack('uint32', x, 8)       # Sensor value 2
+        sensor3 = BinaryTools.unpack('uint32', x, 12)      # Sensor value 3
+        sensor4 = BinaryTools.unpack('uint32', x, 16)      # Sensor value 4
+        status = BinaryTools.unpack('uint16', x, 20)       # Status flags
+
+        return {
+            'event': 'Sensor Data',
+            'conditions': json.dumps({
+                'odometer_m': odometer,
+                'sensor_1': sensor1,
+                'sensor_2': sensor2, 
+                'sensor_3': sensor3,
+                'sensor_4': sensor4,
+                'status': status
+            })
+        }
 
     @classmethod
     def type_from_block(cls, unescaped_block):
@@ -1470,6 +1528,8 @@ class Gen2:
             0x3c: "Disarmed Status",
             0x3d: "Battery Module Contactor Closed",
             0x3e: "Cell Voltages",
+            0x51: "Vehicle State Telemetry",  # Type 81 (0x51)
+            0x54: "Sensor Data",              # Type 84 (0x54)
             0xfd: "Debug String"
         }
         return descriptions.get(message_type, f"Unknown Type {message_type}")
@@ -1599,6 +1659,8 @@ class Gen2:
             0x3b: cls.precharge_decay_too_steep,
             0x3c: cls.disarmed_status,
             0x3d: cls.battery_contactor_closed,
+            0x51: cls.vehicle_state_telemetry,  # Type 81
+            0x54: cls.sensor_data,              # Type 84
             0xfd: cls.debug_message
         }
         entry_parser = parsers.get(message_type)

@@ -431,6 +431,53 @@ Offset | Length | Contents
 0x36   | 2      | cell 27 mV
 0x38   | 2      | cell 28 mV
 
+### `0x51` (Type 81) - Vehicle State Telemetry
+*Added in 2025+ firmware*
+
+Offset | Length | Contents
+------ | :----: | --------
+0x00   | 68     | Vehicle state telemetry data (68 bytes total)
+
+**Decoded structure (little-endian):**
+- Bytes 36-39: Vehicle state string ("TOP", "RUN", "STOP", "UN", etc.)
+- Bytes 0-3: Odometer reading (meters)
+- Bytes 4-7: SOC raw value
+- Bytes 8-11: Ambient temperature raw value
+- Bytes 12-15: Temperature sensor 1 (°C)
+- Bytes 16-19: Temperature sensor 2 (°C)  
+- Bytes 20-23: Temperature sensor 3 (°C)
+- Bytes 24-27: Temperature sensor 4 (°C)
+- Remaining bytes: Additional telemetry values (under investigation)
+
+### `0x54` (Type 84) - Sensor Data
+*Added in 2025+ firmware*
+
+Offset | Length | Contents
+------ | :----: | --------
+0x00   | 22     | Sensor telemetry data (22 bytes total)
+
+**Decoded structure (little-endian):**
+- Bytes 0-3: Odometer reading (meters)
+- Bytes 4-7: Sensor reading 1
+- Bytes 8-11: Sensor reading 2
+- Bytes 12-15: Sensor reading 3
+- Bytes 16-19: Sensor reading 4
+- Bytes 20-21: Status flags (uint16)
+
+### `0xfb` (Type 251) - System Information
+*Added in 2025+ firmware*
+
+Offset | Length | Contents
+------ | :----: | --------
+0x00   | ~110   | System information including VIN, serial numbers, firmware versions
+
+**Contains:**
+- MBB identifier
+- VIN number (17 characters)
+- Serial numbers
+- Firmware version strings
+- System configuration data
+
 ### `0xfd` - debug string
 Offset | Length     | Contents
 ------ | :--------: | --------
