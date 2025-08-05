@@ -87,6 +87,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                 improved_conditions
             )
             if discharge_match:
+                pack_voltage_mv = int(discharge_match.group(10))
                 json_data = {
                     'amp_hours': int(discharge_match.group(1)),
                     'state_of_charge_percent': int(discharge_match.group(2)),
@@ -97,7 +98,8 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                     'voltage_balance': int(discharge_match.group(7)),
                     'pack_temp_celsius': int(discharge_match.group(8)),
                     'bms_temp_celsius': int(discharge_match.group(9)),
-                    'pack_voltage_mv': int(discharge_match.group(10)),
+                    'pack_voltage_mv': pack_voltage_mv,
+                    'pack_voltage_volts': pack_voltage_mv / 1000.0,
                     'mode': discharge_match.group(11).strip()
                 }
                 improved_conditions = json.dumps(json_data)
@@ -108,18 +110,27 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
             if ',' in soc_data:
                 values = [v.strip() for v in soc_data.split(',')]
                 if len(values) >= 11:  # Extended format (11+ values)
+                    pack_voltage_mv = int(values[3]) if values[3].isdigit() else values[3]
+                    voltage_max_mv = int(values[8]) if values[8].isdigit() else values[8]
+                    voltage_min_1_mv = int(values[9]) if values[9].isdigit() else values[9]
+                    voltage_min_2_mv = int(values[10]) if values[10].isdigit() else values[10]
+                    
                     json_data = {
                         'soc_raw_1': int(values[0]) if values[0].isdigit() else values[0],
                         'soc_raw_2': int(values[1]) if values[1].isdigit() else values[1],
                         'soc_raw_3': int(values[2]) if values[2].isdigit() else values[2],
-                        'pack_voltage_mv': int(values[3]) if values[3].isdigit() else values[3],
+                        'pack_voltage_mv': pack_voltage_mv,
+                        'pack_voltage_volts': pack_voltage_mv / 1000.0 if isinstance(pack_voltage_mv, int) else pack_voltage_mv,
                         'soc_percent_1': int(values[4]) if values[4].isdigit() else values[4],
                         'soc_percent_2': int(values[5]) if values[5].isdigit() else values[5],
                         'soc_percent_3': int(values[6]) if values[6].isdigit() else values[6],
                         'balance_count': int(values[7]) if values[7].isdigit() else values[7],
-                        'voltage_max': int(values[8]) if values[8].isdigit() else values[8],
-                        'voltage_min_1': int(values[9]) if values[9].isdigit() else values[9],
-                        'voltage_min_2': int(values[10]) if values[10].isdigit() else values[10],
+                        'voltage_max': voltage_max_mv,
+                        'voltage_max_volts': voltage_max_mv / 1000.0 if isinstance(voltage_max_mv, int) else voltage_max_mv,
+                        'voltage_min_1': voltage_min_1_mv,
+                        'voltage_min_1_volts': voltage_min_1_mv / 1000.0 if isinstance(voltage_min_1_mv, int) else voltage_min_1_mv,
+                        'voltage_min_2': voltage_min_2_mv,
+                        'voltage_min_2_volts': voltage_min_2_mv / 1000.0 if isinstance(voltage_min_2_mv, int) else voltage_min_2_mv,
                         'current_ma': int(values[11]) if len(values) > 11 and values[11].isdigit() else (values[11] if len(values) > 11 else None)
                     }
                     improved_event = 'SOC Data'
@@ -132,11 +143,13 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         except ValueError:
                             return val
                     
+                    pack_voltage_mv = safe_int(values[3])
                     json_data = {
                         'soc_raw_1': safe_int(values[0]),
                         'soc_raw_2': safe_int(values[1]),
                         'soc_raw_3': safe_int(values[2]),
-                        'pack_voltage_mv': safe_int(values[3]),
+                        'pack_voltage_mv': pack_voltage_mv,
+                        'pack_voltage_volts': pack_voltage_mv / 1000.0 if isinstance(pack_voltage_mv, int) else pack_voltage_mv,
                         'soc_percent_1': safe_int(values[4]),
                         'soc_percent_2': safe_int(values[5]),
                         'soc_percent_3': safe_int(values[6]),
@@ -247,9 +260,13 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         improved_conditions
                     )
                     if pack_v_match:
+                        pack_voltage_mv = int(pack_v_match.group(1))
+                        switched_voltage_mv = int(pack_v_match.group(2))
                         json_data = {
-                            'pack_voltage_mv': int(pack_v_match.group(1)),
-                            'switched_voltage_mv': int(pack_v_match.group(2)),
+                            'pack_voltage_mv': pack_voltage_mv,
+                            'pack_voltage_volts': pack_voltage_mv / 1000.0,
+                            'switched_voltage_mv': switched_voltage_mv,
+                            'switched_voltage_volts': switched_voltage_mv / 1000.0,
                             'precharge_percent': int(pack_v_match.group(3)),
                             'discharge_current_ma': int(pack_v_match.group(4))
                         }
@@ -260,9 +277,13 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         improved_conditions
                     )
                     if pack_v_match:
+                        pack_voltage_mv = int(pack_v_match.group(1))
+                        switched_voltage_mv = int(pack_v_match.group(2))
                         json_data = {
-                            'pack_voltage_mv': int(pack_v_match.group(1)),
-                            'switched_voltage_mv': int(pack_v_match.group(2)),
+                            'pack_voltage_mv': pack_voltage_mv,
+                            'pack_voltage_volts': pack_voltage_mv / 1000.0,
+                            'switched_voltage_mv': switched_voltage_mv,
+                            'switched_voltage_volts': switched_voltage_mv / 1000.0,
                             'precharge_percent': int(pack_v_match.group(3)),
                             'discharge_current_ma': int(pack_v_match.group(4))
                         }
@@ -273,9 +294,13 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         improved_conditions
                     )
                     if pack_v_match:
+                        pack_voltage_mv = int(pack_v_match.group(1))
+                        switched_voltage_mv = int(pack_v_match.group(2))
                         json_data = {
-                            'pack_voltage_mv': int(pack_v_match.group(1)),
-                            'switched_voltage_mv': int(pack_v_match.group(2)),
+                            'pack_voltage_mv': pack_voltage_mv,
+                            'pack_voltage_volts': pack_voltage_mv / 1000.0,
+                            'switched_voltage_mv': switched_voltage_mv,
+                            'switched_voltage_volts': switched_voltage_mv / 1000.0,
                             'duty_cycle_percent': int(pack_v_match.group(3))
                         }
                         improved_conditions = json.dumps(json_data)
@@ -496,7 +521,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
             json_data = {
                 'hex_value': f'0x{hex_value.upper()}',
                 'voltage_mv': decimal_value,
-                'voltage_v': round(decimal_value / 1000.0, 3)
+                'voltage_volts': round(decimal_value / 1000.0, 3)
             }
             improved_event = 'Voltage Reading'
             improved_conditions = json.dumps(json_data)
