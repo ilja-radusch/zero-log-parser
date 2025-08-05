@@ -59,10 +59,10 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
     """
     Improve message parsing by removing redundant prefixes and converting structured data to JSON.
     
-    Returns tuple: (improved_event, improved_conditions, json_data)
+    Returns tuple: (improved_event, improved_conditions, json_data, has_json_data)
     """
     if not event_text:
-        return event_text, conditions_text, None
+        return event_text, conditions_text, None, False
     
     improved_event = event_text
     improved_conditions = conditions_text
