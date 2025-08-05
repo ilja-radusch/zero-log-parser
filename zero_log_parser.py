@@ -37,6 +37,15 @@ ZERO_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'  # ISO format is more universal
 # The output from the MBB (via serial port) lists time as GMT-7
 MBB_TIMESTAMP_GMT_OFFSET = -7 * 60 * 60
 
+
+class MismatchingVinError(Exception):
+    """Raised when attempting to merge LogData objects with different VINs"""
+    def __init__(self, vin1, vin2):
+        self.vin1 = vin1
+        self.vin2 = vin2
+        super().__init__(f"Cannot merge logs with different VINs: '{vin1}' != '{vin2}'")
+
+
 def get_local_timezone_offset():
     """Get the local system timezone offset in seconds from UTC"""
     local_now = datetime.now()
@@ -2357,6 +2366,152 @@ class LogData(object):
                         ', '.join(hex(ord(x)) for x in unknown))
 
         logger.info('Saved to %s', output_file)
+
+    def _get_vin(self):
+        """Get VIN from header info, handling various formats"""
+        return self.header_info.get('VIN', 'Unknown')
+
+    def _get_entry_key(self, entry_payload, entry_num):
+        """Generate a unique key for entry deduplication based on timestamp, event type, and content"""
+        timestamp = entry_payload.get('time', '0')
+        event = entry_payload.get('event', '')
+        conditions = entry_payload.get('conditions', '')
+        
+        # For entries with identical content, use entry number as tiebreaker
+        return (timestamp, event, conditions, entry_num)
+
+    def _merge_entries(self, other_entries, other_entries_count):
+        """Merge entries from another LogData, removing duplicates intelligently"""
+        from copy import deepcopy
+        
+        if self.log_version < REV2 or self.log_version == REV3:
+            # Gen2 format - entries are binary data that need parsing
+            merged_entries = bytearray(self.entries)
+            
+            # Parse existing entries to build deduplication set
+            existing_entries = set()
+            read_pos = 0
+            for entry_num in range(self.entries_count):
+                try:
+                    (length, entry_payload, _) = Gen2.parse_entry(self.entries, read_pos, 0,
+                                                                  logger_for_input('merge'),
+                                                                  timezone_offset=self.timezone_offset)
+                    entry_key = self._get_entry_key(entry_payload, entry_num)
+                    existing_entries.add(entry_key)
+                    read_pos += length
+                except:
+                    break
+            
+            # Parse other entries and add non-duplicates
+            read_pos = 0
+            new_entries_count = 0
+            for entry_num in range(other_entries_count):
+                try:
+                    (length, entry_payload, _) = Gen2.parse_entry(other_entries, read_pos, 0,
+                                                                  logger_for_input('merge'),
+                                                                  timezone_offset=self.timezone_offset)
+                    entry_key = self._get_entry_key(entry_payload, entry_num)
+                    
+                    # Only add if not a duplicate
+                    if entry_key not in existing_entries:
+                        # Add raw entry data
+                        merged_entries.extend(other_entries[read_pos:read_pos + length])
+                        new_entries_count += 1
+                        existing_entries.add(entry_key)
+                    
+                    read_pos += length
+                except:
+                    break
+            
+            return merged_entries, self.entries_count + new_entries_count
+            
+        else:
+            # Gen3 format - entries are already parsed objects
+            merged_entries = list(self.entries)
+            
+            # Build set of existing entries for deduplication
+            existing_entries = set()
+            for entry_num, entry_payload in enumerate(self.entries):
+                entry = Gen3.payload_to_entry(entry_payload)
+                entry_key = (entry.time.timestamp(), entry.event, entry.conditions, entry_num)
+                existing_entries.add(entry_key)
+            
+            # Add non-duplicate entries from other
+            new_entries_count = 0
+            for entry_num, entry_payload in enumerate(other_entries):
+                entry = Gen3.payload_to_entry(entry_payload)
+                entry_key = (entry.time.timestamp(), entry.event, entry.conditions, entry_num)
+                
+                if entry_key not in existing_entries:
+                    merged_entries.append(deepcopy(entry_payload))
+                    new_entries_count += 1
+                    existing_entries.add(entry_key)
+            
+            return merged_entries, self.entries_count + new_entries_count
+
+    def __add__(self, other):
+        """Merge two LogData objects using the + operator"""
+        if not isinstance(other, LogData):
+            raise TypeError(f"Cannot merge LogData with {type(other).__name__}")
+        
+        # Check VIN compatibility
+        self_vin = self._get_vin()
+        other_vin = other._get_vin()
+        
+        if self_vin != 'Unknown' and other_vin != 'Unknown' and self_vin != other_vin:
+            raise MismatchingVinError(self_vin, other_vin)
+        
+        # Create new merged LogData
+        from copy import deepcopy
+        merged = deepcopy(self)
+        
+        # Merge entries with duplicate removal
+        merged.entries, merged.entries_count = self._merge_entries(other.entries, other.entries_count)
+        
+        # Prefer non-Unknown VIN
+        if merged._get_vin() == 'Unknown' and other_vin != 'Unknown':
+            merged.header_info['VIN'] = other_vin
+        
+        # Merge other header info, preferring non-Unknown values
+        for key, value in other.header_info.items():
+            if key not in merged.header_info or merged.header_info[key] == 'Unknown':
+                if value != 'Unknown':
+                    merged.header_info[key] = value
+        
+        return merged
+
+    def __iadd__(self, other):
+        """Merge another LogData object into this one using the += operator"""
+        if not isinstance(other, LogData):
+            raise TypeError(f"Cannot merge LogData with {type(other).__name__}")
+        
+        # Check VIN compatibility
+        self_vin = self._get_vin()
+        other_vin = other._get_vin()
+        
+        if self_vin != 'Unknown' and other_vin != 'Unknown' and self_vin != other_vin:
+            raise MismatchingVinError(self_vin, other_vin)
+        
+        # Merge entries with duplicate removal
+        self.entries, self.entries_count = self._merge_entries(other.entries, other.entries_count)
+        
+        # Prefer non-Unknown VIN
+        if self._get_vin() == 'Unknown' and other_vin != 'Unknown':
+            self.header_info['VIN'] = other_vin
+        
+        # Merge other header info, preferring non-Unknown values
+        for key, value in other.header_info.items():
+            if key not in self.header_info or self.header_info[key] == 'Unknown':
+                if value != 'Unknown':
+                    self.header_info[key] = value
+        
+        return self
+
+    def __radd__(self, other):
+        """Support sum() and other right-hand addition operations"""
+        if other == 0:  # sum() starts with 0
+            return self
+        return other.__add__(self)
 
 
 def parse_log(bin_file: str, output_file: str, utc_offset_hours=None, verbose=False, logger=None, output_format='txt'):
