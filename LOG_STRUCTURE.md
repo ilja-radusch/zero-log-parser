@@ -26,6 +26,32 @@ This document describes three observed MBB log file formats:
 - New message types: Vehicle State (Type 81), Sensor Data (Type 84)
 - Entry count: ~2,200 vs ~6,600 in ring buffer format
 
+## Parser Improvements (v2.2.0+)
+
+Based on JavaScript parser analysis, the following enhancements have been implemented:
+
+### Enhanced Message Type Support
+- **0x05**: BMS Unknown Type 5 - now displays raw hex data
+- **0x0e**: BMS Unknown Type 14 - now displays raw hex data  
+- **0x1c**: MBB Unknown Type 28 - now displays raw hex data
+- **0x26**: MBB Unknown Type 38 - now displays raw hex data
+- **0x37**: MBB BT RX Buffer Overflow - now properly decoded
+
+### Enhanced BMS Discharge Decoder (0x03)
+- **State name translation**: Converts numeric states to readable names:
+  - 0x01 = 'Bike On'
+  - 0x02 = 'Charge' 
+  - 0x03 = 'Idle'
+- **Improved formatting**: Better field labels and unit conversions
+- **Enhanced precision**: Proper handling of signed current values
+
+### Improved Calculations
+- **Discharge Cutback (0x16)**: Uses JavaScript parser formula for percentage calculation
+- **Voltage conversions**: Standardized voltage display with proper decimal precision
+- **Current handling**: Enhanced signed 32-bit current parsing
+
+These improvements ensure better compatibility with existing log analysis tools and provide more comprehensive message decoding.
+
 ## Static addresses (Legacy Format Only)
 
 Address    | Length | Contents
@@ -184,21 +210,22 @@ Offset | Length | Contents
 0x00   | 2      | thr in mv
 0x02   | 3      | unknown
 
-### `0x3` - BMS discharge level
+### `0x3` - BMS discharge level (Enhanced)
+**Parser improvements**: Enhanced with state name translation and improved formatting.
 Offset | Length | Contents
 ------ | :----: | --------
-0x00   | 2      | L low cell
-0x02   | 2      | H high cell
-0x04   | 1      | PT pack temp
-0x05   | 1      | BT board? temp
-0x06   | 4      | AH microamp hours
-0x0a   | 1      | SOC %
-0x0b   | 4      | PV pack voltage mv
-0x0f   | 1      | state 0x01 = 'Bike On', 0x02 = 'Charge', 0x03 = 'Idle'
-0x10   | 4      | I microamps
-0x14   | 2      | l: unloaded? cell
-0x16   | 2      | unknown
-B balance = H - L
+0x00   | 2      | Low cell voltage (mV)
+0x02   | 2      | High cell voltage (mV) 
+0x04   | 1      | Pack temperature (°C)
+0x05   | 1      | BMS temperature (°C)
+0x06   | 4      | Amp hours (µAh, converted to Ah in parser)
+0x0a   | 1      | State of Charge (%)
+0x0b   | 4      | Pack voltage (mV, converted to V in parser)
+0x0f   | 1      | State: 0x01 = 'Bike On', 0x02 = 'Charge', 0x03 = 'Idle'
+0x10   | 4      | Current (µA signed, converted to A in parser)
+0x14   | 2      | Unloaded cell voltage (mV)
+0x16   | 2      | Additional data
+Balance = High cell - Low cell
 
 ### `0x4` - BMS charge full
 Offset | Length | Contents
@@ -212,10 +239,11 @@ Offset | Length | Contents
 0x0b   | 4      | PV pack voltage mv
 B balance = H - L
 
-### `0x5` - BMS unknown
+### `0x5` - BMS Unknown Type 5 (Implemented)
+**Parser status**: Now implemented with raw hex display.
 Offset | Length | Contents
 ------ | :----: | --------
-0x00   | 17      | ???
+0x00   | 17     | Unknown data (displayed as hex in parser)
 
 ### `0x6` - BMS discharge low
 Offset | Length | Contents
@@ -255,10 +283,11 @@ Offset | Length | Contents
 0x02   | 2      | new mV
 0x04   | 1      | corrfact
 
-### `0xe` - BMS unknown
+### `0xe` - BMS Unknown Type 14 (Implemented)
+**Parser status**: Now implemented with raw hex display.
 Offset | Length | Contents
 ------ | :----: | --------
-0x00   | 3      | ???
+0x00   | 3      | Unknown data (displayed as hex in parser)
 
 ### `0x10` - BMS Hibernate
 Offset | Length | Contents
@@ -303,10 +332,11 @@ Offset | Length | Contents
 0x05   | 4      | Switched mV
 0x09   | 1      | Duty cycle %
 
-### `0x1c` - MBB unknown
+### `0x1c` - MBB Unknown Type 28 (Implemented)
+**Parser status**: Now implemented with raw hex display.
 Offset | Length | Contents
 ------ | :----: | --------
-0x00   | 8      | ???
+0x00   | 8      | Unknown data (displayed as hex in parser)
 
 ### `0x1e` - MBB unknown
 Offset | Length | Contents
@@ -323,10 +353,11 @@ Offset | Length | Contents
 ------ | :----: | --------
 0x00   | 3      | ???
 
-### `0x26` - MBB unknown
+### `0x26` - MBB Unknown Type 38 (Implemented)
+**Parser status**: Now implemented with raw hex display.
 Offset | Length | Contents
 ------ | :----: | --------
-0x00   | 6      | ???
+0x00   | 6      | Unknown data (displayed as hex in parser)
 
 ### `0x28` - battery CAN link up
 Offset | Length | Contents
@@ -420,10 +451,11 @@ Offset | Length | Contents
 ------ | :----: | --------
 0x00   | 1      | state
 
-### `0x37` - MBB BT RX buffer overflow detected
+### `0x37` - MBB BT RX Buffer Overflow (Implemented)
+**Parser status**: Now implemented with proper decoding.
 Offset | Length | Contents
 ------ | :----: | --------
-0x00   | 3      | unknown
+0x00   | 3      | Buffer overflow data (displayed as hex in parser)
 
 ### `0x38` - bluetooth state
 *(no additional data)*

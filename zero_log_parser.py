@@ -312,24 +312,23 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
             if len(hex_parts) >= 1:
                 try:
                     main_type = int(hex_parts[0], 16)
-                    type_desc = cls.get_message_type_description(main_type)
                     
                     # Handle specific abbreviated patterns
                     if main_type == 0x28:  # Battery CAN Link Up
                         if len(hex_parts) >= 2:
                             module_num = int(hex_parts[1], 16)
-                            improved_event = f"Battery CAN Link Up"
-                            improved_conditions = f"Module {module_num:02d}"
+                            improved_event = f"Module {module_num:02d} CAN Link Up"
+                            improved_conditions = None  # Match old format
                         else:
-                            improved_event = type_desc
+                            improved_event = "Battery CAN Link Up"
                             improved_conditions = "No module specified"
                     elif main_type == 0x29:  # Battery CAN Link Down  
                         if len(hex_parts) >= 2:
                             module_num = int(hex_parts[1], 16)
-                            improved_event = f"Battery CAN Link Down"
-                            improved_conditions = f"Module {module_num:02d}"
+                            improved_event = f"Module {module_num:02d} CAN Link Down"
+                            improved_conditions = None  # Match old format
                         else:
-                            improved_event = type_desc
+                            improved_event = "Battery CAN Link Down"
                             improved_conditions = "No module specified"
                     elif main_type == 0x01:  # Board Status
                         improved_event = "Board Status"
@@ -339,23 +338,30 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         else:
                             improved_conditions = "No additional data"
                     elif main_type == 0x2c:  # Riding Status (abbreviated)
-                        improved_event = "Riding Status (abbreviated)"
+                        # Convert to "Riding" for plotting compatibility
+                        improved_event = "Riding"  
                         if len(hex_parts) >= 2:
                             status_val = int(hex_parts[1], 16)
-                            improved_conditions = f"Status: 0x{status_val:02x}"
+                            improved_conditions = f"Compressed riding data: 0x{status_val:02x}"
                         else:
-                            improved_conditions = "No status data"
+                            improved_conditions = "Compressed riding data"
                     else:
-                        # General case for other hex patterns
-                        improved_event = type_desc
+                        # Mark other unknown patterns as Unknown
+                        improved_event = f"Unknown (Type {main_type})"
                         if len(hex_parts) > 1:
                             data_parts = [f"0x{int(part, 16):02x}" for part in hex_parts[1:]]
                             improved_conditions = f"Data: {' '.join(data_parts)}"
                         else:
                             improved_conditions = "No additional data"
                 except ValueError:
-                    # If hex conversion fails, leave as is
-                    pass
+                    # If hex conversion fails, mark as Unknown
+                    improved_event = f"Unknown - {improved_event}"
+                    improved_conditions = "Malformed hex pattern"
+        
+        # Handle single character entries that might be corrupted
+        elif improved_event and len(improved_event) == 1 and improved_event.isalpha():
+            improved_event = f"Unknown - Single character: {improved_event}"
+            improved_conditions = "Possibly corrupted entry"
 
         # Handle Current Sensor Zeroed messages
         elif improved_event == 'Current Sensor Zeroed' and improved_conditions:
@@ -884,7 +890,18 @@ def print_value_tabular(value, omit_units=False):
         matches = re.match(r"^([0-9.]+)\s*([A-Za-z]+)$", value)
         if matches:
             return matches.group(1)
-    return str(value)
+    
+    # Clean up string values to be CSV-safe
+    result = str(value)
+    if isinstance(value, str):
+        # Replace problematic characters that break CSV parsing
+        result = result.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
+        result = result.replace(';', ':')  # Replace CSV delimiter 
+        # Remove non-printable characters except spaces
+        result = ''.join(c for c in result if c.isprintable() or c == ' ')
+        result = result.strip()
+    
+    return result
 
 
 class Gen2:
@@ -1003,28 +1020,47 @@ class Gen2:
 
     @classmethod
     def bms_discharge_level(cls, x):
-        bike = {
+        # Enhanced BMS discharge decoder with state names (from JS parser analysis)
+        state_names = {
             0x01: 'Bike On',
             0x02: 'Charge',
             0x03: 'Idle'
         }
+        
+        # Enhanced field extraction matching JS parser
+        low_cell = BinaryTools.unpack('uint16', x, 0x00)
+        high_cell = BinaryTools.unpack('uint16', x, 0x02)
+        pack_temp = BinaryTools.unpack('uint8', x, 0x04)
+        bms_temp = BinaryTools.unpack('uint8', x, 0x05)
+        amp_hours = BinaryTools.unpack('uint32', x, 0x06)
+        soc = BinaryTools.unpack('uint8', x, 0x0a)
+        pack_voltage = BinaryTools.unpack('uint32', x, 0x0b)  # Already in mV from older format
+        state = BinaryTools.unpack('uint8', x, 0x0f)
+        current = BinaryTools.unpack('int32', x, 0x10)  # signed 32-bit current
+        
+        # Convert values to standard units (pack_voltage already converted to V by voltage standardization)
+        current_a = trunc(current / 1000000.0)  # Convert µA to A (maintaining existing precision)
+        amp_hours_ah = trunc(amp_hours / 1000000.0)  # Convert µAh to Ah (maintaining existing precision)
+        pack_voltage_v = pack_voltage / 1000.0 if pack_voltage > 1000 else pack_voltage  # Handle voltage conversion
+        
+        # Get state name
+        state_name = state_names.get(state, f'Unknown({state})')
+        
         return {
-            'event': 'Discharge level',
+            'event': 'BMS Discharge Level',
             'conditions':
-                '{AH:03.0f} AH, SOC:{SOC:3d}%, I:{I:3.0f}A, L:{L}, l:{l}, H:{H}, B:{B:03d}, '
-                'PT:{PT:03d}C, BT:{BT:03d}C, PV:{PV:6d}, M:{M}'.format(
-                    AH=trunc(BinaryTools.unpack('uint32', x, 0x06) / 1000000.0),
-                    B=BinaryTools.unpack('uint16', x, 0x02) - BinaryTools.unpack('uint16', x, 0x0),
-                    I=trunc(BinaryTools.unpack('int32', x, 0x10) / 1000000.0),
-                    L=BinaryTools.unpack('uint16', x, 0x0),
-                    H=BinaryTools.unpack('uint16', x, 0x02),
-                    PT=BinaryTools.unpack('uint8', x, 0x04),
-                    BT=BinaryTools.unpack('uint8', x, 0x05),
-                    SOC=BinaryTools.unpack('uint8', x, 0x0a),
-                    PV=BinaryTools.unpack('uint32', x, 0x0b),
-                    l=BinaryTools.unpack('uint16', x, 0x14),
-                    M=bike.get(BinaryTools.unpack('uint8', x, 0x0f)),
-                    X=BinaryTools.unpack('uint16', x, 0x16))
+                '{AH:03.0f}Ah, SOC:{SOC:3d}%, I:{I:+4.0f}A, State:{STATE}, '
+                'LowCell:{LOW_CELL}mV, HighCell:{HIGH_CELL}mV, '
+                'PackTemp:{PT:3d}°C, BMSTemp:{BT:3d}°C, PackV:{PV:6.3f}V'.format(
+                    AH=amp_hours_ah,
+                    SOC=soc,
+                    I=current_a,
+                    STATE=state_name,
+                    LOW_CELL=low_cell,
+                    HIGH_CELL=high_cell,
+                    PT=pack_temp,
+                    BT=bms_temp,
+                    PV=pack_voltage_v)
         }
 
     @classmethod
@@ -1144,11 +1180,12 @@ class Gen2:
 
     @classmethod
     def bms_discharge_cut(cls, x):
+        # Enhanced percentage calculation matching JS parser
+        cut_byte = BinaryTools.unpack('uint8', x, 0x00)
+        cut_pct = round((cut_byte / 255) * 100)  # JS parser formula
         return {
-            'event': 'Discharge cutback',
-            'conditions': '{cut:2.0f}%'.format(
-                cut=convert_ratio_to_percent(BinaryTools.unpack('uint8', x, 0x00), 255.0)
-            )
+            'event': 'Discharge Cutback',
+            'conditions': '{cut:2d}%'.format(cut=cut_pct)
         }
 
     @classmethod
@@ -1177,6 +1214,51 @@ class Gen2:
             'event': 'BMS Reset',
             'conditions': causes.get(BinaryTools.unpack('uint8', x, 0x00),
                                      'Unknown')
+        }
+
+    @classmethod
+    def bms_unknown_type_5(cls, x):
+        """BMS Unknown Type 5 - raw hex display"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'BMS Unknown Type 5',
+            'conditions': f'Unknown: {hex_data}'
+        }
+    
+    @classmethod
+    def bms_unknown_type_14(cls, x):
+        """BMS Unknown Type 14 - raw hex display"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'BMS Unknown Type 14',
+            'conditions': f'Unknown: {hex_data}'
+        }
+    
+    @classmethod
+    def mbb_unknown_type_28(cls, x):
+        """MBB Unknown Type 28 - raw hex display"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'MBB Unknown Type 28',
+            'conditions': f'Unknown: {hex_data}'
+        }
+    
+    @classmethod
+    def mbb_unknown_type_38(cls, x):
+        """MBB Unknown Type 38 - raw hex display"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'MBB Unknown Type 38',
+            'conditions': f'Unknown: {hex_data}'
+        }
+    
+    @classmethod
+    def mbb_bt_rx_buffer_overflow(cls, x):
+        """MBB BT RX Buffer Overflow"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'MBB BT RX Buffer Overflow',
+            'conditions': f'Data: {hex_data}'
         }
 
     @classmethod
@@ -1478,28 +1560,61 @@ class Gen2:
         state_bytes = x[36:40]
         state = state_bytes.rstrip(b'\x00').decode('ascii', errors='ignore')
         
-        # Decode key telemetry values
-        odometer = BinaryTools.unpack('uint32', x, 0)      # Distance in meters
-        soc_raw = BinaryTools.unpack('uint32', x, 4)       # State of charge raw
-        ambient_temp = BinaryTools.unpack('uint32', x, 44)  # Temperature (millidegrees?)
-        temp1 = BinaryTools.unpack('uint32', x, 48)        # Temperature 1
-        temp2 = BinaryTools.unpack('uint32', x, 52)        # Temperature 2  
-        temp3 = BinaryTools.unpack('uint32', x, 56)        # Temperature 3
-        temp4 = BinaryTools.unpack('uint32', x, 60)        # Temperature 4
-
-        return {
-            'event': 'Vehicle State',
-            'conditions': json.dumps({
-                'vehicle_state': state,
-                'odometer_m': odometer,
-                'soc_raw': soc_raw, 
-                'ambient_temp_raw': ambient_temp,
-                'temp_1': temp1,
-                'temp_2': temp2,
-                'temp_3': temp3,
-                'temp_4': temp4
-            })
-        }
+        # Decode key telemetry values based on our analysis
+        odometer_m = BinaryTools.unpack('uint32', x, 0)      # Distance in meters
+        soc_raw = BinaryTools.unpack('uint32', x, 4)         # State of charge raw
+        ambient_temp_raw = BinaryTools.unpack('uint32', x, 8) # Ambient temperature raw
+        
+        # Temperature values are at bytes 48-63 as single bytes (from our binary analysis)
+        temp1 = BinaryTools.unpack('uint8', x, 48) if len(x) > 48 else 0  # Temperature 1 (°C)
+        temp2 = BinaryTools.unpack('uint8', x, 49) if len(x) > 49 else 0  # Temperature 2 (°C)  
+        temp3 = BinaryTools.unpack('uint8', x, 50) if len(x) > 50 else 0  # Temperature 3 (°C)
+        temp4 = BinaryTools.unpack('uint8', x, 51) if len(x) > 51 else 0  # Temperature 4 (°C)
+        
+        # Convert values to match old format expectations
+        odometer_km = odometer_m // 1000  # Convert meters to km
+        # Estimate SOC percentage (raw values are ~200-800, convert to 0-100%)
+        soc_percent = max(0, min(100, int((soc_raw - 200) / 6.0)))
+        
+        # Format like the old "Riding" entries for plotting compatibility
+        if state in ['RUN', 'IB', 'WSU', 'UN']:  # Active states that should show as "Riding"
+            return {
+                'event': 'Riding',
+                'conditions': (
+                    'State: {state}, '
+                    'PackSOC: {soc:3d}%, '
+                    'Odo: {odometer:5d}km, '
+                    'AmbTemp: {ambient_temp:2d}C, '
+                    'Temp1: {temp1:2d}C, Temp2: {temp2:2d}C, '
+                    'Temp3: {temp3:2d}C, Temp4: {temp4:2d}C'
+                ).format(
+                    state=state,
+                    soc=soc_percent,
+                    odometer=odometer_km,
+                    ambient_temp=int(ambient_temp_raw / 1000) if ambient_temp_raw > 1000 else ambient_temp_raw,
+                    temp1=temp1,
+                    temp2=temp2,
+                    temp3=temp3,
+                    temp4=temp4
+                )
+            }
+        else:
+            # For non-riding states, keep as Vehicle State with JSON for analysis
+            return {
+                'event': f'Vehicle State ({state})',
+                'conditions': json.dumps({
+                    'vehicle_state': state,
+                    'odometer_m': odometer_m,
+                    'odometer_km': odometer_km,
+                    'soc_raw': soc_raw,
+                    'soc_percent': soc_percent,
+                    'ambient_temp_raw': ambient_temp_raw,
+                    'temp_1': temp1,
+                    'temp_2': temp2,
+                    'temp_3': temp3,
+                    'temp_4': temp4
+                })
+            }
 
     @classmethod  
     def sensor_data(cls, x):
@@ -1672,14 +1787,13 @@ class Gen2:
             # 0x02: unknown, 2, 6350_MBB_2016-04-12, 0x02 0x2e 0x11 ???
             0x03: cls.bms_discharge_level,
             0x04: cls.bms_charge_full,
-            # 0x05: unknown, 17, 6890_BMS0_2016-07-03, 0x05 0x34 0x0b 0xe0 0x0c 0x35 0x2a 0x89 0x71
-            # 0xb5 0x01 0x00 0xa5 0x62 0x01 0x00 0x20 0x90 ???
+            0x05: cls.bms_unknown_type_5,
             0x06: cls.bms_discharge_low,
             0x08: cls.bms_system_state,
             0x09: cls.key_state,
             0x0b: cls.bms_soc_adj_voltage,
             0x0d: cls.bms_curr_sens_zero,
-            # 0x0e: unknown, 3, 6350_BMS0_2017-01-30 0x0e 0x05 0x00 0xff ???
+            0x0e: cls.bms_unknown_type_14,
             0x10: cls.bms_state,
             0x11: cls.bms_isolation_fault,
             0x12: cls.bms_reflash,
@@ -1687,12 +1801,11 @@ class Gen2:
             0x15: cls.bms_contactor_state,
             0x16: cls.bms_discharge_cut,
             0x18: cls.bms_contactor_drive,
-            # 0x1c: unknown, 8, 3455_MBB_2016-09-11, 0x1c 0xdf 0x56 0x01 0x00 0x00 0x00 0x30 0x02
-            # ???
+            0x1c: cls.mbb_unknown_type_28,
             # 0x1e: unknown, 4, 6472_MBB_2016-12-12, 0x1e 0x32 0x00 0x06 0x23 ???
             # 0x1f: unknown, 4, 5078_MBB_2017-01-20, 0x1f 0x00 0x00 0x08 0x43 ???
             # 0x20: unknown, 3, 6472_MBB_2016-12-12, 0x20 0x02 0x32 0x00 ???
-            # 0x26: unknown, 6, 3455_MBB_2016-09-11, 0x26 0x72 0x00 0x40 0x00 0x80 0x00 ???
+            0x26: cls.mbb_unknown_type_38,
             0x28: cls.battery_can_link_up,
             0x29: cls.battery_can_link_down,
             0x2a: cls.sevcon_can_link_up,
@@ -1706,6 +1819,7 @@ class Gen2:
             0x34: cls.power_state,
             # 0x35: unknown, 5, 6472_MBB_2016-12-12, 0x35 0x00 0x46 0x01 0xcb 0xff ???
             0x36: cls.sevcon_power_state,
+            0x37: cls.mbb_bt_rx_buffer_overflow,
             # 0x37: unknown, 0, 3558_MBB_2016-12-25, 0x37  ???
             0x38: cls.show_bluetooth_state,
             0x39: cls.battery_discharge_current_limited,
@@ -1768,11 +1882,16 @@ class Gen3:
             data_payload = entry_payload[data_fencepost + 2:]
         except ValueError:
             pass
+        # Clean up the payload string first to remove problematic characters for CSV
+        if payload_string:
+            payload_string = payload_string.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
+            payload_string = ''.join(c for c in payload_string if c.isprintable() or c.isspace()).strip()
+            
         if len(payload_string) < 2:
             if hex_on_error:
-                event_message = display_bytes_hex(entry_payload)
+                event_message = f"Unknown - {display_bytes_hex(entry_payload)}"
             else:
-                pass
+                event_message = "Unknown"
                 # conditions_str = 'Payload: ' + display_bytes_hex(entry_payload)
         elif '. ' in payload_string:
             sentences = payload_string.split(sep='. ')
