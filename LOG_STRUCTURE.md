@@ -83,7 +83,26 @@ Pattern | Count | Meaning | 2024 Equivalent
 `0x01` | 124× | Board Status (abbreviated) | "Board Status"
 `0x2c 0x01` | 45× | Riding Status (compressed) | "Riding" (full telemetry)
 `0x7a 0x01` | 44× | Unknown MBB Type 122 | (New in 2025+)
-`0x58 0x15 0x01` | 35× | Unknown pattern | (New in 2025+)
+`0x58 0x15 0x01` | 35× | Unknown complex pattern | (New in 2025+)
+
+### Vehicle State Machine (from Type 81 analysis):
+
+State | Full Name | Odometer Behavior | Interpretation
+------|-----------|-------------------|---------------
+`WSU` | Wakeup/Startup | Large drops (-51 to -83km avg) | Trip odometer reset/different source
+`IB` | In-motion/Battery active | Increases (+46-48km avg) | Normal riding operation
+`UN` | Unknown/Neutral/Idle | Small changes (-3 to +2km) | Parked/idle state
+`TOP` | Trip completion/Peak | Large increases (+101-247km) | End-of-trip summary/total odometer
+`AIT` | Auto/Initialization/Timer | Mixed large changes | System initialization events
+`AKE` | Awake/Active | Very large drops (-423km avg) | Major system reset
+`HRG` | Charging/High-voltage | Mixed, includes large drops | Charging mode
+`EV` | Electric Vehicle mode | Large drop (-142km) | Explicit EV operation mode
+`RUN` | Running | Normal progression | Active vehicle operation  
+`STOP` | Stopped | Normal progression | Vehicle stopped
+`STRT` | Starting | Normal progression | Vehicle startup sequence
+`PWSU` | Power Supply/Startup | Normal progression | Power system initialization
+
+**Key Insight**: The "odometer inconsistencies" are actually multiple concurrent odometer sources (trip, session, total) being switched based on vehicle state. This is normal behavior, not data corruption.
 
 ## Log sections (located by header sequence)
 
@@ -538,6 +557,22 @@ Offset | Length | Contents
   "status": 1
 }
 ```
+
+**Sensor Field Analysis (from multi-vehicle data):**
+
+Field | Value Range | Vehicle State Correlation | Interpretation
+------|-------------|---------------------------|---------------
+`sensor_1` | 200-4.2B | WSU/IB: low (200-600)<br>UN/TOP: high (millions) | Primary sensor, state-dependent
+`sensor_2` | 0-4.3B | WSU: always 0<br>HRG: very high<br>Mixed otherwise | Secondary sensor, 32-bit flags
+`sensor_3` | 0-57M | WSU: always 0<br>Others: variable | Tertiary sensor, temp/voltage?
+`sensor_4` | 0-4.29B | Frequently 4294901760 (0xFFF00000)<br>State-dependent variations | Status/flag register
+`status` | 0-65535 | 16-bit status register<br>Varies by vehicle and state | System status flags
+
+**Sensor Patterns by State:**
+- **WSU (Wakeup)**: sensor_2,3→0, sensor_4→max (clean startup)
+- **IB (In-motion)**: sensor_1→low, sensor_4→max (active operation) 
+- **HRG (Charging)**: sensor_1→low, sensor_2→high (charging mode)
+- **UN (Idle)**: High sensor values (monitoring/background)
 
 ### `0x52` (Type 82) - Unknown Type 82
 *Added in 2025+ firmware - frequently occurring entry*
