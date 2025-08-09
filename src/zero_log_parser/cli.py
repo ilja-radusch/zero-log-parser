@@ -7,7 +7,7 @@ import sys
 from typing import Optional
 
 from . import __version__
-from .core import parse_log
+from .core import parse_log, parse_multiple_logs, generate_merged_output_name
 from .utils import console_logger, default_parsed_output_for
 
 
@@ -20,8 +20,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument(
-        'input_file',
-        help="Input log file (.bin)"
+        'input_files',
+        nargs='+',
+        help="Input log file(s) (.bin). Multiple files will be intelligently merged."
     )
     
     parser.add_argument(
@@ -58,33 +59,37 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def validate_input_file(file_path: str) -> None:
-    """Validate the input file exists and is readable."""
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Input file not found: {file_path}")
-    
-    if not os.path.isfile(file_path):
-        raise ValueError(f"Input path is not a file: {file_path}")
-    
-    if not os.access(file_path, os.R_OK):
-        raise PermissionError(f"Cannot read input file: {file_path}")
+def validate_input_files(file_paths: list) -> None:
+    """Validate that all input files exist and are readable."""
+    for file_path in file_paths:
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Input file not found: {file_path}")
+        
+        if not os.path.isfile(file_path):
+            raise ValueError(f"Input path is not a file: {file_path}")
+        
+        if not os.access(file_path, os.R_OK):
+            raise PermissionError(f"Cannot read input file: {file_path}")
 
 
-def determine_output_file(input_file: str, output_file: Optional[str], format_type: str) -> str:
-    """Determine the output file path."""
+def determine_output_file(input_files: list, output_file: Optional[str], format_type: str) -> str:
+    """Determine the output file path for single or multiple input files."""
     if output_file:
         return output_file
     
-    # Generate default output filename based on format
-    base_name = os.path.splitext(input_file)[0]
-    extensions = {
-        'txt': '.txt',
-        'csv': '.csv',
-        'tsv': '.tsv',
-        'json': '.json'
-    }
-    
-    return base_name + extensions.get(format_type, '.txt')
+    if len(input_files) == 1:
+        # Single file - use traditional naming
+        base_name = os.path.splitext(input_files[0])[0]
+        extensions = {
+            'txt': '.txt',
+            'csv': '.csv',
+            'tsv': '.tsv',
+            'json': '.json'
+        }
+        return base_name + extensions.get(format_type, '.txt')
+    else:
+        # Multiple files - use merged naming
+        return generate_merged_output_name(input_files, format_type)
 
 
 def setup_logging(verbose: bool) -> logging.Logger:
@@ -108,28 +113,43 @@ def main() -> int:
         # Setup logging
         logger = setup_logging(args.verbose)
         
-        # Validate input file
-        validate_input_file(args.input_file)
+        # Validate input files
+        validate_input_files(args.input_files)
         
         # Determine output file
-        output_file = determine_output_file(args.input_file, args.output, args.format)
+        output_file = determine_output_file(args.input_files, args.output, args.format)
         
         # Check if output directory exists
         output_dir = os.path.dirname(output_file)
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir, exist_ok=True)
         
-        # Parse the log file
-        logger.info(f"Parsing {args.input_file} -> {output_file} (format: {args.format})")
-        
-        parse_log(
-            log_file=args.input_file,
-            output_file=output_file,
-            utc_offset_hours=args.timezone,
-            verbose=args.verbose,
-            logger=logger,
-            output_format=args.format
-        )
+        # Parse the log file(s)
+        if len(args.input_files) == 1:
+            # Single file parsing
+            input_file = args.input_files[0]
+            logger.info(f"Parsing {input_file} -> {output_file} (format: {args.format})")
+            
+            parse_log(
+                log_file=input_file,
+                output_file=output_file,
+                utc_offset_hours=args.timezone,
+                verbose=args.verbose,
+                logger=logger,
+                output_format=args.format
+            )
+        else:
+            # Multiple file parsing with merging
+            logger.info(f"Parsing {len(args.input_files)} files -> {output_file} (format: {args.format})")
+            
+            parse_multiple_logs(
+                bin_files=args.input_files,
+                output_file=output_file,
+                utc_offset_hours=args.timezone,
+                verbose=args.verbose,
+                logger=logger,
+                output_format=args.format
+            )
         
         logger.info("Parsing completed successfully")
         
