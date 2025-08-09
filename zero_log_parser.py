@@ -742,7 +742,7 @@ class BinaryTools:
         return all(c in string.printable for c in bytes_or_str)
 
     @classmethod
-    def bms_discharge_level(cls, x):
+    def bms_discharge_level_binary(cls, x):
         # Enhanced BMS discharge decoder with state names and better formatting
         state_names = {
             0x01: 'Bike On',
@@ -1089,6 +1089,32 @@ class Gen2:
         # Return in the original format
         return [(entry['sort_timestamp'], entry['entry_payload'], entry['entry_num']) 
                 for entry in improved_entries]
+
+    @classmethod
+    def bms_discharge_level(cls, x):
+        bike = {
+            0x01: 'Bike On',
+            0x02: 'Charge',
+            0x03: 'Idle'
+        }
+        return {
+            'event': 'Discharge level',
+            'conditions':
+                '{AH:03.0f} AH, SOC:{SOC:3d}%, I:{I:3.0f}A, L:{L}, l:{l}, H:{H}, B:{B:03d}, '
+                'PT:{PT:03d}C, BT:{BT:03d}C, PV:{PV:6d}, M:{M}'.format(
+                    AH=trunc(BinaryTools.unpack('uint32', x, 0x06) / 1000000.0),
+                    B=BinaryTools.unpack('uint16', x, 0x02) - BinaryTools.unpack('uint16', x, 0x0),
+                    I=trunc(BinaryTools.unpack('int32', x, 0x10) / 1000000.0),
+                    L=BinaryTools.unpack('uint16', x, 0x0),
+                    H=BinaryTools.unpack('uint16', x, 0x02),
+                    PT=BinaryTools.unpack('uint8', x, 0x04),
+                    BT=BinaryTools.unpack('uint8', x, 0x05),
+                    SOC=BinaryTools.unpack('uint8', x, 0x0a),
+                    PV=BinaryTools.unpack('uint32', x, 0x0b),
+                    l=BinaryTools.unpack('uint16', x, 0x14),
+                    M=bike.get(BinaryTools.unpack('uint8', x, 0x0f)),
+                    X=BinaryTools.unpack('uint16', x, 0x16))
+        }
 
     @classmethod
     def bms_charge_event_fields(cls, x):
@@ -1767,7 +1793,7 @@ class Gen2:
             # Unknown entry types to be added when defined: type, length, source, example
             0x01: cls.board_status,
             # 0x02: unknown, 2, 6350_MBB_2016-04-12, 0x02 0x2e 0x11 ???
-            0x03: BinaryTools.bms_discharge_level,
+            0x03: cls.bms_discharge_level,
             0x04: cls.bms_charge_full,
             0x05: BinaryTools.bms_unknown_type_5,
             0x06: cls.bms_discharge_low,
