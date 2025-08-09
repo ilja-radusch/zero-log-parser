@@ -462,17 +462,25 @@ class ZeroLogPlotter:
             if i < len(df_sorted) - 1:
                 current_time = df_sorted.iloc[i]['timestamp']
                 next_time = df_sorted.iloc[i + 1]['timestamp']
-                time_diff = (next_time - current_time).total_seconds() / 60  # minutes
+                time_diff = (pd.to_datetime(next_time) - pd.to_datetime(current_time)).total_seconds() / 60  # minutes
                 
-                # If gap is larger than threshold, insert NaN row
+                # If gap is larger than threshold, insert NaN rows at both ends of the gap
                 if time_diff > gap_threshold_minutes:
-                    gap_row = df_sorted.iloc[i].copy()
-                    # Set values to NaN except timestamp (which we'll set to just after current)
-                    for col in gap_row.index:
+                    # Insert gap start marker
+                    gap_start = df_sorted.iloc[i].copy()
+                    for col in gap_start.index:
                         if col != 'timestamp' and pd.api.types.is_numeric_dtype(df_sorted[col]):
-                            gap_row[col] = pd.NA
-                    gap_row['timestamp'] = current_time + pd.Timedelta(minutes=1)
-                    df_with_gaps.append(gap_row)
+                            gap_start[col] = None  # Use None instead of pd.NA for better plotly compatibility
+                    gap_start['timestamp'] = pd.to_datetime(current_time) + pd.Timedelta(minutes=1)
+                    df_with_gaps.append(gap_start)
+                    
+                    # Insert gap end marker
+                    gap_end = df_sorted.iloc[i].copy()
+                    for col in gap_end.index:
+                        if col != 'timestamp' and pd.api.types.is_numeric_dtype(df_sorted[col]):
+                            gap_end[col] = None  # Use None instead of pd.NA for better plotly compatibility
+                    gap_end['timestamp'] = pd.to_datetime(next_time) - pd.Timedelta(minutes=1)
+                    df_with_gaps.append(gap_end)
         
         return pd.DataFrame(df_with_gaps).reset_index(drop=True)
     
@@ -635,26 +643,42 @@ class ZeroLogPlotter:
         riding_data = self.data['mbb_riding']
         disarmed_data = self.data['mbb_disarmed']
         
-        # Combine data sources
-        voltage_data = []
+        # Separate pack voltage data sources from cell voltage data sources
+        pack_voltage_data = []
+        cell_voltage_data = []
         
-        # Add BMS data (has pack_voltage_volts and cell voltages)
+        # Add BMS data (has both pack_voltage_volts and cell voltages)
         if not bms_data.empty:
-            voltage_data.append(bms_data)
+            pack_voltage_data.append(bms_data)
+            # Only add BMS data to cell voltage if it actually has cell voltage values
+            if 'voltage_max_volts' in bms_data.columns and bms_data['voltage_max_volts'].notna().any():
+                cell_voltage_data.append(bms_data)
         if not bms_discharge_data.empty:
-            voltage_data.append(bms_discharge_data)
+            pack_voltage_data.append(bms_discharge_data)
+            # Only add BMS discharge data to cell voltage if it actually has cell voltage values
+            if 'voltage_max_volts' in bms_discharge_data.columns and bms_discharge_data['voltage_max_volts'].notna().any():
+                cell_voltage_data.append(bms_discharge_data)
             
-        # Add MBB data (has pack_voltage_volts)
+        # Add MBB data (has pack_voltage_volts but not meaningful cell voltages)
         if not riding_data.empty and 'pack_voltage_volts' in riding_data.columns:
-            voltage_data.append(riding_data)
+            pack_voltage_data.append(riding_data)
         if not disarmed_data.empty and 'pack_voltage_volts' in disarmed_data.columns:
-            voltage_data.append(disarmed_data)
+            pack_voltage_data.append(disarmed_data)
         
-        if not voltage_data:
+        if not pack_voltage_data:
             return go.Figure().add_annotation(text="No voltage data available",
                                             xref="paper", yref="paper", x=0.5, y=0.5)
         
-        combined_data = self._insert_gaps_for_temporal_breaks(pd.concat(voltage_data).sort_values('timestamp'))
+        # Apply gap insertion separately for pack voltage and cell voltage data
+        pack_voltage_combined = self._insert_gaps_for_temporal_breaks(pd.concat(pack_voltage_data).sort_values('timestamp'))
+        
+        # For cell voltage data, only process if we have actual cell voltage data
+        cell_voltage_combined = None
+        if cell_voltage_data:
+            cell_voltage_combined = self._insert_gaps_for_temporal_breaks(pd.concat(cell_voltage_data).sort_values('timestamp'))
+        
+        # Use pack voltage data as the primary combined data for backward compatibility
+        combined_data = pack_voltage_combined
         
         # Create subplots: Pack voltage on top, Cell voltages on bottom
         fig = make_subplots(
@@ -675,12 +699,15 @@ class ZeroLogPlotter:
                 connectgaps=False
             ), row=1, col=1)
         
-        # Cell voltage subplot (row 2) - use standardized volt fields if available
-        if 'voltage_max_volts' in combined_data.columns and 'voltage_min_1_volts' in combined_data.columns:
+        # Cell voltage subplot (row 2) - use cell voltage data with proper gap handling
+        cell_data_to_plot = cell_voltage_combined if cell_voltage_combined is not None else combined_data
+        
+        # Use standardized volt fields if available
+        if 'voltage_max_volts' in cell_data_to_plot.columns and 'voltage_min_1_volts' in cell_data_to_plot.columns:
             # Use pre-converted volt values
             fig.add_trace(go.Scatter(
-                x=combined_data['timestamp'],
-                y=combined_data['voltage_max_volts'],
+                x=cell_data_to_plot['timestamp'],
+                y=cell_data_to_plot['voltage_max_volts'],
                 mode='lines',
                 name='Max Cell Voltage',
                 line=dict(color='red', dash='dash'),
@@ -688,8 +715,8 @@ class ZeroLogPlotter:
             ), row=2, col=1)
             
             fig.add_trace(go.Scatter(
-                x=combined_data['timestamp'], 
-                y=combined_data['voltage_min_1_volts'],
+                x=cell_data_to_plot['timestamp'], 
+                y=cell_data_to_plot['voltage_min_1_volts'],
                 mode='lines',
                 name='Min Cell Voltage',
                 line=dict(color='orange', dash='dash'),
@@ -699,13 +726,13 @@ class ZeroLogPlotter:
             ), row=2, col=1)
         
         # Fallback to millivolt fields if volt fields not available (backward compatibility)
-        elif 'voltage_max' in combined_data.columns and 'voltage_min_1' in combined_data.columns:
+        elif 'voltage_max' in cell_data_to_plot.columns and 'voltage_min_1' in cell_data_to_plot.columns:
             # Convert mV to V (fallback for older data)
-            voltage_max_v = combined_data['voltage_max'] / 1000
-            voltage_min_v = combined_data['voltage_min_1'] / 1000
+            voltage_max_v = cell_data_to_plot['voltage_max'] / 1000
+            voltage_min_v = cell_data_to_plot['voltage_min_1'] / 1000
             
             fig.add_trace(go.Scatter(
-                x=combined_data['timestamp'],
+                x=cell_data_to_plot['timestamp'],
                 y=voltage_max_v,
                 mode='lines',
                 name='Max Cell Voltage',
@@ -714,7 +741,7 @@ class ZeroLogPlotter:
             ), row=2, col=1)
             
             fig.add_trace(go.Scatter(
-                x=combined_data['timestamp'],
+                x=cell_data_to_plot['timestamp'],
                 y=voltage_min_v,
                 mode='lines',
                 name='Min Cell Voltage',

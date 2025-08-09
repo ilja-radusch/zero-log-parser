@@ -80,26 +80,26 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
     
     # Parse structured data patterns and convert to JSON
     try:
-        # Handle Discharge level messages
+        # Handle Discharge level messages (updated format with voltages in V, balance in mV)
         if improved_event == 'Discharge level' and improved_conditions:
             discharge_match = re.match(
-                r'(\d+) AH, SOC:\s*(\d+)%, I:\s*(-?\d+)A, L:(\d+), l:(\d+), H:(\d+), B:(\d+), PT:(\d+)C, BT:(\d+)C, PV:\s*(\d+), M:(.+)',
+                r'(\d+) AH, SOC:\s*(\d+)%, I:\s*(-?\d+)A, L:(\d+\.\d+)V, l:(\d+\.\d+)V, H:(\d+\.\d+)V, B:(\d+)mV, PT:(\d+)C, BT:(\d+)C, PV:\s*(\d+\.\d+)V, M:(.+)',
                 improved_conditions
             )
             if discharge_match:
-                pack_voltage_mv = int(discharge_match.group(10))
+                pack_voltage_v = float(discharge_match.group(10))
                 json_data = {
                     'amp_hours': int(discharge_match.group(1)),
                     'state_of_charge_percent': int(discharge_match.group(2)),
                     'current_amps': int(discharge_match.group(3)),
-                    'voltage_low': int(discharge_match.group(4)),
-                    'voltage_low_cell': int(discharge_match.group(5)),
-                    'voltage_high': int(discharge_match.group(6)),
-                    'voltage_balance': int(discharge_match.group(7)),
+                    'voltage_low_cell_volts': float(discharge_match.group(4)),
+                    'voltage_unloaded_cell_volts': float(discharge_match.group(5)),
+                    'voltage_high_cell_volts': float(discharge_match.group(6)),
+                    'voltage_balance_mv': int(discharge_match.group(7)),
                     'pack_temp_celsius': int(discharge_match.group(8)),
                     'bms_temp_celsius': int(discharge_match.group(9)),
-                    'pack_voltage_mv': pack_voltage_mv,
-                    'pack_voltage_volts': pack_voltage_mv / 1000.0,
+                    'pack_voltage_volts': pack_voltage_v,
+                    'pack_voltage_mv': int(pack_voltage_v * 1000),  # For backward compatibility
                     'mode': discharge_match.group(11).strip()
                 }
                 improved_conditions = json.dumps(json_data)
@@ -1100,23 +1100,29 @@ class Gen2:
             0x02: 'Charge',
             0x03: 'Idle'
         }
+        # Convert cell voltages from millivolts to volts for consistency
+        low_cell_v = BinaryTools.unpack('uint16', x, 0x0) / 1000.0
+        high_cell_v = BinaryTools.unpack('uint16', x, 0x02) / 1000.0
+        unloaded_cell_v = BinaryTools.unpack('uint16', x, 0x14) / 1000.0
+        pack_voltage_v = BinaryTools.unpack('uint32', x, 0x0b) / 1000.0
+        balance_mv = BinaryTools.unpack('uint16', x, 0x02) - BinaryTools.unpack('uint16', x, 0x0)
+        
         return {
             'event': 'Discharge level',
             'conditions':
-                '{AH:03.0f} AH, SOC:{SOC:3d}%, I:{I:3.0f}A, L:{L}, l:{l}, H:{H}, B:{B:03d}, '
-                'PT:{PT:03d}C, BT:{BT:03d}C, PV:{PV:6d}, M:{M}'.format(
+                '{AH:03.0f} AH, SOC:{SOC:3d}%, I:{I:3.0f}A, L:{L:4.2f}V, l:{l:4.2f}V, H:{H:4.2f}V, B:{B:03d}mV, '
+                'PT:{PT:03d}C, BT:{BT:03d}C, PV:{PV:6.1f}V, M:{M}'.format(
                     AH=trunc(BinaryTools.unpack('uint32', x, 0x06) / 1000000.0),
-                    B=BinaryTools.unpack('uint16', x, 0x02) - BinaryTools.unpack('uint16', x, 0x0),
+                    B=balance_mv,
                     I=trunc(BinaryTools.unpack('int32', x, 0x10) / 1000000.0),
-                    L=BinaryTools.unpack('uint16', x, 0x0),
-                    H=BinaryTools.unpack('uint16', x, 0x02),
+                    L=low_cell_v,
+                    H=high_cell_v,
                     PT=BinaryTools.unpack('uint8', x, 0x04),
                     BT=BinaryTools.unpack('uint8', x, 0x05),
                     SOC=BinaryTools.unpack('uint8', x, 0x0a),
-                    PV=BinaryTools.unpack('uint32', x, 0x0b),
-                    l=BinaryTools.unpack('uint16', x, 0x14),
-                    M=bike.get(BinaryTools.unpack('uint8', x, 0x0f)),
-                    X=BinaryTools.unpack('uint16', x, 0x16))
+                    PV=pack_voltage_v,
+                    l=unloaded_cell_v,
+                    M=bike.get(BinaryTools.unpack('uint8', x, 0x0f)))
         }
 
     @classmethod
@@ -1124,12 +1130,12 @@ class Gen2:
         return {
             'AH': trunc(BinaryTools.unpack('uint32', x, 0x06) / 1000000.0),
             'B': BinaryTools.unpack('uint16', x, 0x02) - BinaryTools.unpack('uint16', x, 0x0),
-            'L': BinaryTools.unpack('uint16', x, 0x00),
-            'H': BinaryTools.unpack('uint16', x, 0x02),
+            'L': BinaryTools.unpack('uint16', x, 0x00) / 1000.0,  # Convert to volts
+            'H': BinaryTools.unpack('uint16', x, 0x02) / 1000.0,  # Convert to volts
             'PT': BinaryTools.unpack('uint8', x, 0x04),
             'BT': BinaryTools.unpack('uint8', x, 0x05),
             'SOC': BinaryTools.unpack('uint8', x, 0x0a),
-            'PV': BinaryTools.unpack('uint32', x, 0x0b)
+            'PV': BinaryTools.unpack('uint32', x, 0x0b) / 1000.0  # Convert to volts
         }
 
     @classmethod
@@ -1138,8 +1144,8 @@ class Gen2:
         return {
             'event': 'Charged To Full',
             'conditions':
-                ('{AH:03.0f} AH, SOC: {SOC}%,         L:{L},         H:{H}, B:{B:03d}, '
-                 'PT:{PT:03d}C, BT:{BT:03d}C, PV:{PV:6d}').format_map(fields)
+                ('{AH:03.0f} AH, SOC: {SOC}%,         L:{L:4.2f}V,         H:{H:4.2f}V, B:{B:03d}mV, '
+                 'PT:{PT:03d}C, BT:{BT:03d}C, PV:{PV:6.1f}V').format_map(fields)
         }
 
     @classmethod
@@ -1149,8 +1155,8 @@ class Gen2:
         return {
             'event': 'Discharged To Low',
             'conditions':
-                ('{AH:03.0f} AH, SOC:{SOC:3d}%,         L:{L},         H:{H}, B:{B:03d}, '
-                 'PT:{PT:03d}C, BT:{BT:03d}C, PV:{PV:6d}').format_map(fields)
+                ('{AH:03.0f} AH, SOC:{SOC:3d}%,         L:{L:4.2f}V,         H:{H:4.2f}V, B:{B:03d}mV, '
+                 'PT:{PT:03d}C, BT:{BT:03d}C, PV:{PV:6.1f}V').format_map(fields)
         }
 
     @classmethod
@@ -1219,19 +1225,22 @@ class Gen2:
     def bms_contactor_state(cls, x):
         pack_voltage = BinaryTools.unpack('uint32', x, 0x01)
         switched_voltage = BinaryTools.unpack('uint32', x, 0x05)
+        # Convert to volts for display
+        pack_voltage_v = pack_voltage / 1000.0
+        switched_voltage_v = switched_voltage / 1000.0
         return {
             'event': '{state}'.format(
                 state='Contactor was ' +
                       ('Closed' if BinaryTools.unpack('bool', x, 0x0) else 'Opened')),
             'conditions':
-                ('Pack V: {pv}mV, '
-                 'Switched V: {sv}mV, '
+                ('Pack V: {pv:6.1f}V, '
+                 'Switched V: {sv:6.1f}V, '
                  'Prechg Pct: {pc:2.0f}%, '
-                 'Dischg Cur: {dc}mA').format(
-                    pv=pack_voltage,
-                    sv=switched_voltage,
+                 'Dischg Cur: {dc:4.0f}A').format(
+                    pv=pack_voltage_v,
+                    sv=switched_voltage_v,
                     pc=convert_ratio_to_percent(switched_voltage, pack_voltage),
-                    dc=BinaryTools.unpack('int32', x, 0x09))
+                    dc=BinaryTools.unpack('int32', x, 0x09) / 1000.0)
         }
 
     @classmethod
@@ -1246,11 +1255,14 @@ class Gen2:
 
     @classmethod
     def bms_contactor_drive(cls, x):
+        # Convert millivolts to volts for display
+        pack_voltage_v = BinaryTools.unpack('uint32', x, 0x01) / 1000.0
+        switched_voltage_v = BinaryTools.unpack('uint32', x, 0x05) / 1000.0
         return {
             'event': 'Contactor drive turned on',
-            'conditions': 'Pack V: {pv}mV, Switched V: {sv}mV, Duty Cycle: {dc}%'.format(
-                pv=BinaryTools.unpack('uint32', x, 0x01),
-                sv=BinaryTools.unpack('uint32', x, 0x05),
+            'conditions': 'Pack V: {pv:6.1f}V, Switched V: {sv:6.1f}V, Duty Cycle: {dc}%'.format(
+                pv=pack_voltage_v,
+                sv=switched_voltage_v,
                 dc=BinaryTools.unpack('uint8', x, 0x09))
         }
 
@@ -2990,7 +3002,8 @@ def parse_multiple_logs(bin_files, output_file, utc_offset_hours=None, verbose=F
 def main():
     import argparse
     parser = argparse.ArgumentParser(
-        description='Parse Zero Motorcycle binary log files. Supports single or multiple files with smart merging.')
+        description='Parse Zero Motorcycle binary log files. Supports single or multiple files with smart merging.',
+        epilog='For interactive plotting, use: zero-plotting <input_files>')
     parser.add_argument('bin_files', nargs='+', help='Zero *.bin log file(s) to decode. Multiple files will be intelligently merged.')
     parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET). Defaults to local system timezone.')
     parser.add_argument('-o', '--output', help='decoded log filename (auto-generated if not specified)')
