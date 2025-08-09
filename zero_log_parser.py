@@ -741,6 +741,78 @@ class BinaryTools:
     def is_printable(bytes_or_str: str) -> bool:
         return all(c in string.printable for c in bytes_or_str)
 
+    @classmethod
+    def bms_discharge_level(cls, x):
+        # Enhanced BMS discharge decoder with state names and better formatting
+        state_names = {
+            0x01: 'Bike On',
+            0x02: 'Charge', 
+            0x03: 'Idle'
+        }
+        return {
+            'event': 'BMS Discharge Level',
+            'conditions':
+                '{AH:03.0f}Ah, SOC:{SOC:3d}%, I:{I:+4.0f}A, State:{STATE}, '
+                'LowCell:{L}mV, HighCell:{H}mV, Balance:{B:+4d}mV, UnloadedCell:{l}mV, '
+                'PackTemp:{PT:3d}°C, BMSTemp:{BT:3d}°C, PackV:{PV:6.1f}V'.format(
+                    AH=trunc(BinaryTools.unpack('uint32', x, 0x06) / 1000000.0),
+                    SOC=BinaryTools.unpack('uint8', x, 0x0a),
+                    I=trunc(BinaryTools.unpack('int32', x, 0x10) / 1000000.0),
+                    STATE=state_names.get(BinaryTools.unpack('uint8', x, 0x0f), f'Unknown({BinaryTools.unpack("uint8", x, 0x0f)})'),
+                    L=BinaryTools.unpack('uint16', x, 0x0),
+                    H=BinaryTools.unpack('uint16', x, 0x02),
+                    B=BinaryTools.unpack('uint16', x, 0x02) - BinaryTools.unpack('uint16', x, 0x0),
+                    l=BinaryTools.unpack('uint16', x, 0x14),
+                    PT=BinaryTools.unpack('uint8', x, 0x04),
+                    BT=BinaryTools.unpack('uint8', x, 0x05),
+                    PV=BinaryTools.unpack('uint32', x, 0x0b) / 1000.0)
+        }
+
+    @classmethod
+    def bms_unknown_type_5(cls, x):
+        """BMS Unknown Type 5 - raw hex display"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'BMS Unknown Type 5',
+            'conditions': f'Unknown: {hex_data}'
+        }
+    
+    @classmethod
+    def bms_unknown_type_14(cls, x):
+        """BMS Unknown Type 14 - raw hex display"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'BMS Unknown Type 14',
+            'conditions': f'Unknown: {hex_data}'
+        }
+    
+    @classmethod
+    def mbb_unknown_type_28(cls, x):
+        """MBB Unknown Type 28 - raw hex display"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'MBB Unknown Type 28',
+            'conditions': f'Unknown: {hex_data}'
+        }
+    
+    @classmethod
+    def mbb_unknown_type_38(cls, x):
+        """MBB Unknown Type 38 - raw hex display"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'MBB Unknown Type 38',
+            'conditions': f'Unknown: {hex_data}'
+        }
+    
+    @classmethod
+    def mbb_bt_rx_buffer_overflow(cls, x):
+        """MBB BT RX Buffer Overflow"""
+        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
+        return {
+            'event': 'MBB BT RX Buffer Overflow',
+            'conditions': f'Data: {hex_data}'
+        }
+
 
 vin_length = 17
 vin_guaranteed_prefix = '538'
@@ -1019,51 +1091,6 @@ class Gen2:
                 for entry in improved_entries]
 
     @classmethod
-    def bms_discharge_level(cls, x):
-        # Enhanced BMS discharge decoder with state names (from JS parser analysis)
-        state_names = {
-            0x01: 'Bike On',
-            0x02: 'Charge',
-            0x03: 'Idle'
-        }
-        
-        # Enhanced field extraction matching JS parser
-        low_cell = BinaryTools.unpack('uint16', x, 0x00)
-        high_cell = BinaryTools.unpack('uint16', x, 0x02)
-        pack_temp = BinaryTools.unpack('uint8', x, 0x04)
-        bms_temp = BinaryTools.unpack('uint8', x, 0x05)
-        amp_hours = BinaryTools.unpack('uint32', x, 0x06)
-        soc = BinaryTools.unpack('uint8', x, 0x0a)
-        pack_voltage = BinaryTools.unpack('uint32', x, 0x0b)  # Already in mV from older format
-        state = BinaryTools.unpack('uint8', x, 0x0f)
-        current = BinaryTools.unpack('int32', x, 0x10)  # signed 32-bit current
-        
-        # Convert values to standard units (pack_voltage already converted to V by voltage standardization)
-        current_a = trunc(current / 1000000.0)  # Convert µA to A (maintaining existing precision)
-        amp_hours_ah = trunc(amp_hours / 1000000.0)  # Convert µAh to Ah (maintaining existing precision)
-        pack_voltage_v = pack_voltage / 1000.0 if pack_voltage > 1000 else pack_voltage  # Handle voltage conversion
-        
-        # Get state name
-        state_name = state_names.get(state, f'Unknown({state})')
-        
-        return {
-            'event': 'BMS Discharge Level',
-            'conditions':
-                '{AH:03.0f}Ah, SOC:{SOC:3d}%, I:{I:+4.0f}A, State:{STATE}, '
-                'LowCell:{LOW_CELL}mV, HighCell:{HIGH_CELL}mV, '
-                'PackTemp:{PT:3d}°C, BMSTemp:{BT:3d}°C, PackV:{PV:6.3f}V'.format(
-                    AH=amp_hours_ah,
-                    SOC=soc,
-                    I=current_a,
-                    STATE=state_name,
-                    LOW_CELL=low_cell,
-                    HIGH_CELL=high_cell,
-                    PT=pack_temp,
-                    BT=bms_temp,
-                    PV=pack_voltage_v)
-        }
-
-    @classmethod
     def bms_charge_event_fields(cls, x):
         return {
             'AH': trunc(BinaryTools.unpack('uint32', x, 0x06) / 1000000.0),
@@ -1214,51 +1241,6 @@ class Gen2:
             'event': 'BMS Reset',
             'conditions': causes.get(BinaryTools.unpack('uint8', x, 0x00),
                                      'Unknown')
-        }
-
-    @classmethod
-    def bms_unknown_type_5(cls, x):
-        """BMS Unknown Type 5 - raw hex display"""
-        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
-        return {
-            'event': 'BMS Unknown Type 5',
-            'conditions': f'Unknown: {hex_data}'
-        }
-    
-    @classmethod
-    def bms_unknown_type_14(cls, x):
-        """BMS Unknown Type 14 - raw hex display"""
-        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
-        return {
-            'event': 'BMS Unknown Type 14',
-            'conditions': f'Unknown: {hex_data}'
-        }
-    
-    @classmethod
-    def mbb_unknown_type_28(cls, x):
-        """MBB Unknown Type 28 - raw hex display"""
-        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
-        return {
-            'event': 'MBB Unknown Type 28',
-            'conditions': f'Unknown: {hex_data}'
-        }
-    
-    @classmethod
-    def mbb_unknown_type_38(cls, x):
-        """MBB Unknown Type 38 - raw hex display"""
-        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
-        return {
-            'event': 'MBB Unknown Type 38',
-            'conditions': f'Unknown: {hex_data}'
-        }
-    
-    @classmethod
-    def mbb_bt_rx_buffer_overflow(cls, x):
-        """MBB BT RX Buffer Overflow"""
-        hex_data = ' '.join(f'{b:02x}' for b in x[:min(16, len(x))])
-        return {
-            'event': 'MBB BT RX Buffer Overflow',
-            'conditions': f'Data: {hex_data}'
         }
 
     @classmethod
@@ -1785,15 +1767,15 @@ class Gen2:
             # Unknown entry types to be added when defined: type, length, source, example
             0x01: cls.board_status,
             # 0x02: unknown, 2, 6350_MBB_2016-04-12, 0x02 0x2e 0x11 ???
-            0x03: cls.bms_discharge_level,
+            0x03: BinaryTools.bms_discharge_level,
             0x04: cls.bms_charge_full,
-            0x05: cls.bms_unknown_type_5,
+            0x05: BinaryTools.bms_unknown_type_5,
             0x06: cls.bms_discharge_low,
             0x08: cls.bms_system_state,
             0x09: cls.key_state,
             0x0b: cls.bms_soc_adj_voltage,
             0x0d: cls.bms_curr_sens_zero,
-            0x0e: cls.bms_unknown_type_14,
+            0x0e: BinaryTools.bms_unknown_type_14,
             0x10: cls.bms_state,
             0x11: cls.bms_isolation_fault,
             0x12: cls.bms_reflash,
@@ -1801,11 +1783,11 @@ class Gen2:
             0x15: cls.bms_contactor_state,
             0x16: cls.bms_discharge_cut,
             0x18: cls.bms_contactor_drive,
-            0x1c: cls.mbb_unknown_type_28,
+            0x1c: BinaryTools.mbb_unknown_type_28,
             # 0x1e: unknown, 4, 6472_MBB_2016-12-12, 0x1e 0x32 0x00 0x06 0x23 ???
             # 0x1f: unknown, 4, 5078_MBB_2017-01-20, 0x1f 0x00 0x00 0x08 0x43 ???
             # 0x20: unknown, 3, 6472_MBB_2016-12-12, 0x20 0x02 0x32 0x00 ???
-            0x26: cls.mbb_unknown_type_38,
+            0x26: BinaryTools.mbb_unknown_type_38,
             0x28: cls.battery_can_link_up,
             0x29: cls.battery_can_link_down,
             0x2a: cls.sevcon_can_link_up,
@@ -1819,7 +1801,7 @@ class Gen2:
             0x34: cls.power_state,
             # 0x35: unknown, 5, 6472_MBB_2016-12-12, 0x35 0x00 0x46 0x01 0xcb 0xff ???
             0x36: cls.sevcon_power_state,
-            0x37: cls.mbb_bt_rx_buffer_overflow,
+            0x37: BinaryTools.mbb_bt_rx_buffer_overflow,
             # 0x37: unknown, 0, 3558_MBB_2016-12-25, 0x37  ???
             0x38: cls.show_bluetooth_state,
             0x39: cls.battery_discharge_current_limited,
@@ -2840,21 +2822,168 @@ def logger_for_input(bin_file):
     return logging.getLogger(bin_file)
 
 
+def generate_merged_output_name(bin_files, output_format='txt'):
+    """Generate a meaningful output filename for merged log files"""
+    import os
+    from datetime import datetime
+    
+    # Extract common elements from filenames
+    basenames = [os.path.basename(f) for f in bin_files]
+    
+    # Try to find common VIN/serial pattern
+    common_vin = None
+    for name in basenames:
+        if len(name) > 17 and name.startswith('538'):  # Zero VIN pattern
+            vin_candidate = name[:17]
+            if all(vin_candidate in other_name for other_name in basenames):
+                common_vin = vin_candidate
+                break
+    
+    # Create descriptive filename
+    if common_vin:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        filename = f"{common_vin}_merged_{len(bin_files)}files_{timestamp}.{output_format}"
+    else:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        filename = f"zero_logs_merged_{len(bin_files)}files_{timestamp}.{output_format}"
+    
+    return filename
+
+
+def parse_multiple_logs(bin_files, output_file, utc_offset_hours=None, verbose=False, logger=None, output_format='txt'):
+    """
+    Parse multiple Zero binary log files and merge them intelligently
+    
+    Args:
+        bin_files: List of binary log file paths
+        output_file: Output filename for merged result
+        utc_offset_hours: Timezone offset
+        verbose: Enable verbose logging
+        logger: Logger instance
+        output_format: Output format (txt, csv, tsv, json)
+    """
+    if not logger:
+        logger = console_logger(' + '.join(bin_files), verbose=verbose)
+    
+    logger.info('Multi-file parsing: %d files', len(bin_files))
+    
+    # Validate all files exist and are readable
+    for bin_file in bin_files:
+        if not os.path.exists(bin_file):
+            raise FileNotFoundError(f"Log file not found: {bin_file}")
+        if not is_log_file_path(bin_file):
+            logger.warning(f"File may not be a valid log file: {bin_file}")
+    
+    merged_log_data = None
+    successful_files = 0
+    
+    # Process each file and merge
+    for i, bin_file in enumerate(bin_files):
+        try:
+            logger.info('[%d/%d] Processing %s', i+1, len(bin_files), bin_file)
+            
+            # Parse individual file to LogData
+            log_file = LogFile(bin_file, logger=logger)
+            
+            # Convert timezone offset to seconds
+            if isinstance(utc_offset_hours, int):
+                timezone_offset = utc_offset_hours * 60 * 60
+            elif utc_offset_hours is not None:
+                try:
+                    timezone_offset = float(utc_offset_hours) * 60 * 60
+                except (ValueError, TypeError):
+                    timezone_offset = get_local_timezone_offset()
+            else:
+                timezone_offset = get_local_timezone_offset()
+            
+            log_data = LogData(log_file, timezone_offset=timezone_offset)
+            
+            if merged_log_data is None:
+                # First file becomes the base
+                merged_log_data = log_data
+                successful_files = 1
+                logger.info('Base log data: %s entries', len(log_data.entries) if hasattr(log_data, 'entries') else 'unknown')
+            else:
+                # Merge with existing data using LogData's smart merging
+                try:
+                    merged_log_data = merged_log_data + log_data
+                    successful_files += 1
+                    logger.info('Merged successfully. Total entries: %s', 
+                              len(merged_log_data.entries) if hasattr(merged_log_data, 'entries') else 'unknown')
+                except MismatchingVinError as e:
+                    logger.error('VIN mismatch: %s', e)
+                    logger.error('Skipping file: %s', bin_file)
+                    continue
+                except Exception as e:
+                    logger.error('Failed to merge %s: %s', bin_file, e)
+                    logger.error('Skipping file: %s', bin_file)
+                    continue
+                    
+        except Exception as e:
+            logger.error('Failed to process %s: %s', bin_file, e)
+            continue
+    
+    if merged_log_data is None:
+        raise RuntimeError("No files could be processed successfully")
+    
+    if successful_files < len(bin_files):
+        logger.warning('Successfully merged %d out of %d files', successful_files, len(bin_files))
+    else:
+        logger.info('Successfully merged all %d files', successful_files)
+    
+    # Output merged result
+    logger.info('Writing merged log to %s', output_file)
+    
+    if output_format.lower() in ['csv', 'tsv']:
+        # Generate CSV/TSV output
+        merged_log_data.emit_tabular_decoding(output_file, out_format=output_format.lower())
+    elif output_format.lower() == 'json':
+        # Generate JSON output
+        merged_log_data.emit_json_decoding(output_file)
+    elif output_format.lower() == 'txt':
+        # Generate standard text output
+        if merged_log_data.has_official_output_reference():
+            merged_log_data.emit_zero_compatible_decoding(output_file)
+        else:
+            merged_log_data.emit_tabular_decoding(output_file)
+            merged_log_data.emit_zero_compatible_decoding(output_file)
+    else:
+        # Default to text format for unknown formats
+        if merged_log_data.has_official_output_reference():
+            merged_log_data.emit_zero_compatible_decoding(output_file)
+        else:
+            merged_log_data.emit_tabular_decoding(output_file)
+            merged_log_data.emit_zero_compatible_decoding(output_file)
+    
+    logger.info('Multi-file parsing completed: %s', output_file)
+
+
 def main():
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('bin_file', help='Zero *.bin log to decode')
+    parser = argparse.ArgumentParser(
+        description='Parse Zero Motorcycle binary log files. Supports single or multiple files with smart merging.')
+    parser.add_argument('bin_files', nargs='+', help='Zero *.bin log file(s) to decode. Multiple files will be intelligently merged.')
     parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET). Defaults to local system timezone.')
-    parser.add_argument('-o', '--output', help='decoded log filename')
+    parser.add_argument('-o', '--output', help='decoded log filename (auto-generated if not specified)')
     parser.add_argument('-f', '--format', choices=['txt', 'csv', 'tsv', 'json'], default='txt', 
                        help='Output format: txt (default), csv, tsv, or json')
     parser.add_argument('-v', '--verbose', help='additional logging')
     args = parser.parse_args()
-    log_file = args.bin_file
-    output_file = args.output or default_parsed_output_for(args.bin_file)
+    
+    # Handle single vs multiple files
+    bin_files = args.bin_files
     tz_code = args.timezone
     output_format = args.format
-    parse_log(log_file, output_file, utc_offset_hours=tz_code, verbose=args.verbose, output_format=output_format)
+    
+    if len(bin_files) == 1:
+        # Single file - use existing behavior
+        log_file = bin_files[0]
+        output_file = args.output or default_parsed_output_for(log_file)
+        parse_log(log_file, output_file, utc_offset_hours=tz_code, verbose=args.verbose, output_format=output_format)
+    else:
+        # Multiple files - use new multi-file parsing
+        output_file = args.output or generate_merged_output_name(bin_files, output_format)
+        parse_multiple_logs(bin_files, output_file, utc_offset_hours=tz_code, verbose=args.verbose, output_format=output_format)
 
 
 if __name__ == '__main__':
