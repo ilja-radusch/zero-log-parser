@@ -2680,7 +2680,7 @@ class LogData(object):
                     (length, entry_payload, _) = Gen2.parse_entry(self.entries, read_pos, 0,
                                                                   logger_for_input('merge'),
                                                                   timezone_offset=self.timezone_offset)
-                    entry_key = self._get_entry_key(entry_payload, entry_num)
+                    entry_key = self._get_entry_key(entry_payload, 0)
                     existing_entries.add(entry_key)
                     read_pos += length
                 except:
@@ -2694,7 +2694,7 @@ class LogData(object):
                     (length, entry_payload, _) = Gen2.parse_entry(other_entries, read_pos, 0,
                                                                   logger_for_input('merge'),
                                                                   timezone_offset=self.timezone_offset)
-                    entry_key = self._get_entry_key(entry_payload, entry_num)
+                    entry_key = self._get_entry_key(entry_payload, 0)
                     
                     # Only add if not a duplicate
                     if entry_key not in existing_entries:
@@ -2717,14 +2717,14 @@ class LogData(object):
             existing_entries = set()
             for entry_num, entry_payload in enumerate(self.entries):
                 entry = Gen3.payload_to_entry(entry_payload)
-                entry_key = (entry.time.timestamp(), entry.event, entry.conditions, entry_num)
+                entry_key = (entry.time.timestamp(), entry.event, entry.conditions, 0)
                 existing_entries.add(entry_key)
             
             # Add non-duplicate entries from other
             new_entries_count = 0
             for entry_num, entry_payload in enumerate(other_entries):
                 entry = Gen3.payload_to_entry(entry_payload)
-                entry_key = (entry.time.timestamp(), entry.event, entry.conditions, entry_num)
+                entry_key = (entry.time.timestamp(), entry.event, entry.conditions, 0)
                 
                 if entry_key not in existing_entries:
                     merged_entries.append(deepcopy(entry_payload))
