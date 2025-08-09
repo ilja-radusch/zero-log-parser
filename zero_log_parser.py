@@ -119,19 +119,20 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         'soc_raw_1': int(values[0]) if values[0].isdigit() else values[0],
                         'soc_raw_2': int(values[1]) if values[1].isdigit() else values[1],
                         'soc_raw_3': int(values[2]) if values[2].isdigit() else values[2],
-                        'pack_voltage_mv': pack_voltage_mv,
-                        'pack_voltage_volts': pack_voltage_mv / 1000.0 if isinstance(pack_voltage_mv, int) else pack_voltage_mv,
+                        'pack_voltage_volts': round(pack_voltage_mv / 1000.0, 3) if isinstance(pack_voltage_mv, int) else pack_voltage_mv,
+                        'pack_voltage_mv': pack_voltage_mv,  # Deprecated, use pack_voltage_volts
                         'soc_percent_1': int(values[4]) if values[4].isdigit() else values[4],
                         'soc_percent_2': int(values[5]) if values[5].isdigit() else values[5],
                         'soc_percent_3': int(values[6]) if values[6].isdigit() else values[6],
                         'balance_count': int(values[7]) if values[7].isdigit() else values[7],
-                        'voltage_max': voltage_max_mv,
-                        'voltage_max_volts': voltage_max_mv / 1000.0 if isinstance(voltage_max_mv, int) else voltage_max_mv,
-                        'voltage_min_1': voltage_min_1_mv,
-                        'voltage_min_1_volts': voltage_min_1_mv / 1000.0 if isinstance(voltage_min_1_mv, int) else voltage_min_1_mv,
-                        'voltage_min_2': voltage_min_2_mv,
-                        'voltage_min_2_volts': voltage_min_2_mv / 1000.0 if isinstance(voltage_min_2_mv, int) else voltage_min_2_mv,
-                        'current_ma': int(values[11]) if len(values) > 11 and values[11].isdigit() else (values[11] if len(values) > 11 else None)
+                        'voltage_max_volts': round(voltage_max_mv / 1000.0, 3) if isinstance(voltage_max_mv, int) else voltage_max_mv,
+                        'voltage_min_1_volts': round(voltage_min_1_mv / 1000.0, 3) if isinstance(voltage_min_1_mv, int) else voltage_min_1_mv,
+                        'voltage_min_2_volts': round(voltage_min_2_mv / 1000.0, 3) if isinstance(voltage_min_2_mv, int) else voltage_min_2_mv,
+                        'voltage_max': voltage_max_mv,  # Deprecated, use voltage_max_volts
+                        'voltage_min_1': voltage_min_1_mv,  # Deprecated, use voltage_min_1_volts
+                        'voltage_min_2': voltage_min_2_mv,  # Deprecated, use voltage_min_2_volts
+                        'current_ma': int(values[11]) if len(values) > 11 and values[11].isdigit() else (values[11] if len(values) > 11 else None),
+                        'current_amps': round(int(values[11]) / 1000.0, 3) if len(values) > 11 and values[11].isdigit() else None
                     }
                     improved_event = 'SOC Data'
                     improved_conditions = json.dumps(json_data)
@@ -263,12 +264,13 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         pack_voltage_mv = int(pack_v_match.group(1))
                         switched_voltage_mv = int(pack_v_match.group(2))
                         json_data = {
-                            'pack_voltage_mv': pack_voltage_mv,
-                            'pack_voltage_volts': pack_voltage_mv / 1000.0,
-                            'switched_voltage_mv': switched_voltage_mv,
-                            'switched_voltage_volts': switched_voltage_mv / 1000.0,
+                            'pack_voltage_volts': round(pack_voltage_mv / 1000.0, 3),
+                            'switched_voltage_volts': round(switched_voltage_mv / 1000.0, 3),
+                            'pack_voltage_mv': pack_voltage_mv,  # Deprecated, use pack_voltage_volts
+                            'switched_voltage_mv': switched_voltage_mv,  # Deprecated, use switched_voltage_volts
                             'precharge_percent': int(pack_v_match.group(3)),
-                            'discharge_current_ma': int(pack_v_match.group(4))
+                            'discharge_current_ma': int(pack_v_match.group(4)),
+                            'discharge_current_amps': round(int(pack_v_match.group(4)) / 1000.0, 3)
                         }
                         improved_conditions = json.dumps(json_data)
                 elif 'was Opened' in improved_event:
@@ -280,12 +282,13 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         pack_voltage_mv = int(pack_v_match.group(1))
                         switched_voltage_mv = int(pack_v_match.group(2))
                         json_data = {
-                            'pack_voltage_mv': pack_voltage_mv,
-                            'pack_voltage_volts': pack_voltage_mv / 1000.0,
-                            'switched_voltage_mv': switched_voltage_mv,
-                            'switched_voltage_volts': switched_voltage_mv / 1000.0,
+                            'pack_voltage_volts': round(pack_voltage_mv / 1000.0, 3),
+                            'switched_voltage_volts': round(switched_voltage_mv / 1000.0, 3),
+                            'pack_voltage_mv': pack_voltage_mv,  # Deprecated, use pack_voltage_volts
+                            'switched_voltage_mv': switched_voltage_mv,  # Deprecated, use switched_voltage_volts
                             'precharge_percent': int(pack_v_match.group(3)),
-                            'discharge_current_ma': int(pack_v_match.group(4))
+                            'discharge_current_ma': int(pack_v_match.group(4)),
+                            'discharge_current_amps': round(int(pack_v_match.group(4)) / 1000.0, 3)
                         }
                         improved_conditions = json.dumps(json_data)
                 elif 'drive turned on' in improved_event:
@@ -297,10 +300,10 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         pack_voltage_mv = int(pack_v_match.group(1))
                         switched_voltage_mv = int(pack_v_match.group(2))
                         json_data = {
-                            'pack_voltage_mv': pack_voltage_mv,
-                            'pack_voltage_volts': pack_voltage_mv / 1000.0,
-                            'switched_voltage_mv': switched_voltage_mv,
-                            'switched_voltage_volts': switched_voltage_mv / 1000.0,
+                            'pack_voltage_volts': round(pack_voltage_mv / 1000.0, 3),
+                            'switched_voltage_volts': round(switched_voltage_mv / 1000.0, 3),
+                            'pack_voltage_mv': pack_voltage_mv,  # Deprecated, use pack_voltage_volts
+                            'switched_voltage_mv': switched_voltage_mv,  # Deprecated, use switched_voltage_volts
                             'duty_cycle_percent': int(pack_v_match.group(3))
                         }
                         improved_conditions = json.dumps(json_data)
