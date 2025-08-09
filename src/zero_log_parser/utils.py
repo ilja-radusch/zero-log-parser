@@ -21,10 +21,10 @@ def get_timezone_offset(tz_code: str | int | None) -> int:
     elif isinstance(tz_code, str):
         tz = ZoneInfo(tz_code)
         now = datetime.now(tz)
-        timezone_offset = now.utcoffset().total_seconds()
+        timezone_offset = int(now.utcoffset().total_seconds() or 0)
     elif tz_code is not None:
         try:
-            timezone_offset = float(tz_code) * 60 * 60
+            timezone_offset = int(float(tz_code) * 60 * 60)
         except (ValueError, TypeError):
             timezone_offset = get_local_timezone_offset()
     else:
@@ -36,11 +36,8 @@ def get_timezone_offset(tz_code: str | int | None) -> int:
 
 def get_local_timezone_offset() -> int:
     """Get the local system timezone offset in seconds from UTC"""
-    local_now = datetime.now()
-    utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
-    # Calculate offset in seconds
-    offset = (local_now - utc_now).total_seconds()
-    return int(offset)
+    local_now = datetime.now().astimezone()
+    return int(local_now.utcoffset().total_seconds() or 0)
 
 
 def is_vin(vin: str) -> bool:

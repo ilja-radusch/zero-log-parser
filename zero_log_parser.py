@@ -54,13 +54,6 @@ except ImportError:
     except ImportError:
         pass
 
-def get_local_timezone_offset():
-    """Get the local system timezone offset in seconds from UTC"""
-    local_now = datetime.now()
-    utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
-    # Calculate offset in seconds
-    offset = (local_now - utc_now).total_seconds()
-    return int(offset)
 
 
 def improve_message_parsing(event_text: str, conditions_text: str = None) -> tuple:

@@ -39,7 +39,6 @@ REV3 = _standalone.REV3
 
 # Export utility functions
 is_vin = _standalone.is_vin
-get_local_timezone_offset = _standalone.get_local_timezone_offset
 
 # Export exceptions
 MismatchingVinError = _standalone.MismatchingVinError

@@ -101,13 +101,13 @@ def main() -> int:
             # Single file - use existing logic
             plotter = ZeroLogPlotter(args.input_files[0],
                                      start_time=start_time, end_time=end_time,
-                                     utc_offset_hours=tz_code)
+                                     tz_code=tz_code)
         else:
             # Multiple files - merge and then plot
             print(f"Merging {len(args.input_files)} log files...")
             plotter = ZeroLogPlotter.from_multiple_files(args.input_files,
                                                          start_time=start_time, end_time=end_time,
-                                                         utc_offset_hours=tz_code)
+                                                         tz_code=tz_code)
         
         if args.plot == 'all':
             plotter.generate_all_plots(args.output_dir)
