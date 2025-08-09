@@ -46,6 +46,14 @@ class MismatchingVinError(Exception):
         super().__init__(f"Cannot merge logs with different VINs: '{vin1}' != '{vin2}'")
 
 
+try:
+    from src.zero_log_parser.utils import get_timezone_offset
+except ImportError:
+    try:
+        from zero_log_parser.utils import get_timezone_offset
+    except ImportError:
+        pass
+
 def get_local_timezone_offset():
     """Get the local system timezone offset in seconds from UTC"""
     local_now = datetime.now()
@@ -2797,7 +2805,7 @@ class LogData(object):
         return other.__add__(self)
 
 
-def parse_log(bin_file: str, output_file: str, utc_offset_hours=None, verbose=False, logger=None, output_format='txt'):
+def parse_log(bin_file: str, output_file: str, tz_code=None, verbose=False, logger=None, output_format='txt'):
     """
     Parse a Zero binary log file into a human readable text file
     """
@@ -2805,16 +2813,7 @@ def parse_log(bin_file: str, output_file: str, utc_offset_hours=None, verbose=Fa
         logger = console_logger(bin_file, verbose=verbose)
     logger.info('Parsing %s', bin_file)
 
-    if isinstance(utc_offset_hours, int):
-        timezone_offset = utc_offset_hours * 60 * 60
-    elif utc_offset_hours is not None:
-        try:
-            timezone_offset = float(utc_offset_hours) * 60 * 60
-        except (ValueError, TypeError):
-            timezone_offset = get_local_timezone_offset()
-    else:
-        # Use local system timezone as default
-        timezone_offset = get_local_timezone_offset()
+    timezone_offset = get_timezone_offset(tz_code)
 
     log = LogFile(bin_file)
     log_data = LogData(log, timezone_offset=timezone_offset)
@@ -2891,14 +2890,14 @@ def generate_merged_output_name(bin_files, output_format='txt'):
     return filename
 
 
-def parse_multiple_logs(bin_files, output_file, utc_offset_hours=None, verbose=False, logger=None, output_format='txt'):
+def parse_multiple_logs(bin_files, output_file, tz_code=None, verbose=False, logger=None, output_format='txt'):
     """
     Parse multiple Zero binary log files and merge them intelligently
     
     Args:
         bin_files: List of binary log file paths
         output_file: Output filename for merged result
-        utc_offset_hours: Timezone offset
+        tz_code: Timezone offset
         verbose: Enable verbose logging
         logger: Logger instance
         output_format: Output format (txt, csv, tsv, json)
@@ -2918,6 +2917,9 @@ def parse_multiple_logs(bin_files, output_file, utc_offset_hours=None, verbose=F
     merged_log_data = None
     successful_files = 0
     
+    # Convert timezone offset to seconds
+    timezone_offset = get_timezone_offset(tz_code)
+
     # Process each file and merge
     for i, bin_file in enumerate(bin_files):
         try:
@@ -2925,18 +2927,6 @@ def parse_multiple_logs(bin_files, output_file, utc_offset_hours=None, verbose=F
             
             # Parse individual file to LogData
             log_file = LogFile(bin_file, logger=logger)
-            
-            # Convert timezone offset to seconds
-            if isinstance(utc_offset_hours, int):
-                timezone_offset = utc_offset_hours * 60 * 60
-            elif utc_offset_hours is not None:
-                try:
-                    timezone_offset = float(utc_offset_hours) * 60 * 60
-                except (ValueError, TypeError):
-                    timezone_offset = get_local_timezone_offset()
-            else:
-                timezone_offset = get_local_timezone_offset()
-            
             log_data = LogData(log_file, timezone_offset=timezone_offset)
             
             if merged_log_data is None:
@@ -3019,13 +3009,14 @@ def main():
     
     if len(bin_files) == 1:
         # Single file - use existing behavior
-        log_file = bin_files[0]
-        output_file = args.output or default_parsed_output_for(log_file)
-        parse_log(log_file, output_file, utc_offset_hours=tz_code, verbose=args.verbose, output_format=output_format)
+        bin_file = bin_files[0]
+        output_file = args.output or default_parsed_output_for(bin_file)
+        parse_log(bin_file, output_file, tz_code=tz_code, verbose=args.verbose, output_format=output_format)
     else:
         # Multiple files - use new multi-file parsing
         output_file = args.output or generate_merged_output_name(bin_files, output_format)
-        parse_multiple_logs(bin_files, output_file, utc_offset_hours=tz_code, verbose=args.verbose, output_format=output_format)
+        parse_multiple_logs(bin_files, output_file,
+                            tz_code=tz_code, verbose=args.verbose, output_format=output_format)
 
 
 if __name__ == '__main__':

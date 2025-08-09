@@ -44,6 +44,8 @@ def create_parser() -> argparse.ArgumentParser:
         help="Filter data until this time (e.g., 'last week', 'July 2025', '2025-07-31')"
     )
     
+    parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET). Defaults to local system timezone.')
+
     parser.add_argument(
         '--version',
         action='version',
@@ -73,6 +75,8 @@ def main() -> int:
         start_time = None
         end_time = None
         
+        tz_code = args.timezone
+
         if args.start or args.end:
             from .utils import parse_time_filter
             
@@ -95,11 +99,15 @@ def main() -> int:
         # Create plotter and generate plots
         if len(args.input_files) == 1:
             # Single file - use existing logic
-            plotter = ZeroLogPlotter(args.input_files[0], start_time=start_time, end_time=end_time)
+            plotter = ZeroLogPlotter(args.input_files[0],
+                                     start_time=start_time, end_time=end_time,
+                                     utc_offset_hours=tz_code)
         else:
             # Multiple files - merge and then plot
             print(f"Merging {len(args.input_files)} log files...")
-            plotter = ZeroLogPlotter.from_multiple_files(args.input_files, start_time=start_time, end_time=end_time)
+            plotter = ZeroLogPlotter.from_multiple_files(args.input_files,
+                                                         start_time=start_time, end_time=end_time,
+                                                         utc_offset_hours=tz_code)
         
         if args.plot == 'all':
             plotter.generate_all_plots(args.output_dir)

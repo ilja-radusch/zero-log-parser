@@ -8,7 +8,7 @@ from typing import Optional
 
 from . import __version__
 from .core import parse_log, parse_multiple_logs, generate_merged_output_name
-from .utils import console_logger, default_parsed_output_for
+from .utils import console_logger, default_parsed_output_for, get_timezone_offset
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -131,9 +131,9 @@ def main() -> int:
             logger.info(f"Parsing {input_file} -> {output_file} (format: {args.format})")
             
             parse_log(
-                log_file=input_file,
+                bin_file=input_file,
                 output_file=output_file,
-                utc_offset_hours=args.timezone,
+                tz_code=args.timezone,
                 verbose=args.verbose,
                 logger=logger,
                 output_format=args.format
@@ -145,7 +145,7 @@ def main() -> int:
             parse_multiple_logs(
                 bin_files=args.input_files,
                 output_file=output_file,
-                utc_offset_hours=args.timezone,
+                tz_code=args.timezone,
                 verbose=args.verbose,
                 logger=logger,
                 output_format=args.format

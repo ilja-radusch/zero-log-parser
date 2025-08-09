@@ -6,12 +6,32 @@ import re
 import string
 from datetime import datetime, timezone, timedelta
 from typing import Union, List, Optional
-
+from zoneinfo import ZoneInfo
 
 # Localized time format - use system locale preference
 ZERO_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'  # ISO format is more universal
 # The output from the MBB (via serial port) lists time as GMT-7
 MBB_TIMESTAMP_GMT_OFFSET = -7 * 60 * 60
+
+
+def get_timezone_offset(tz_code: str | int | None) -> int:
+    """Get the timezone offset in seconds from timezone argument"""
+    if isinstance(tz_code, int):
+        timezone_offset = tz_code * 60 * 60
+    elif isinstance(tz_code, str):
+        tz = ZoneInfo(tz_code)
+        now = datetime.now(tz)
+        timezone_offset = now.utcoffset().total_seconds()
+    elif tz_code is not None:
+        try:
+            timezone_offset = float(tz_code) * 60 * 60
+        except (ValueError, TypeError):
+            timezone_offset = get_local_timezone_offset()
+    else:
+        # Use local system timezone as default
+        timezone_offset = get_local_timezone_offset()
+
+    return timezone_offset
 
 
 def get_local_timezone_offset() -> int:

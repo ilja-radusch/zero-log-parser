@@ -32,7 +32,9 @@ from .core import parse_log, LogData, LogFile, MismatchingVinError
 class ZeroLogPlotter:
     """Generate interactive plots from Zero Motorcycle log data."""
     
-    def __init__(self, input_file: str, start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None):
+    def __init__(self, input_file: str,
+                 start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None,
+                 utc_offset_hours: Optional['int'] = None):
         """Initialize plotter with input file (bin or csv) and optional time filters."""
         if not PLOTLY_AVAILABLE:
             raise ImportError("plotly and pandas are required for plotting. Install with: pip install -e \".[plotting]\"")
@@ -40,12 +42,15 @@ class ZeroLogPlotter:
         self.input_file = input_file
         self.start_time = start_time
         self.end_time = end_time
+        self.utc_offset_hours = utc_offset_hours
         self.data = {}
         self.file_type = self._detect_file_type()
         self._load_data()
 
     @classmethod
-    def from_multiple_files(cls, input_files: List[str], start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None):
+    def from_multiple_files(cls, input_files: List[str],
+                            start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None,
+                            utc_offset_hours: Optional['int'] = None):
         """Create plotter from multiple log files by merging them first."""
         if not PLOTLY_AVAILABLE:
             raise ImportError("plotly and pandas are required for plotting. Install with: pip install -e \".[plotting]\"")
@@ -54,7 +59,7 @@ class ZeroLogPlotter:
             raise ValueError("At least one input file must be provided")
         
         if len(input_files) == 1:
-            return cls(input_files[0], start_time=start_time, end_time=end_time)
+            return cls(input_files[0], start_time=start_time, end_time=end_time, utc_offset_hours=utc_offset_hours)
         
         # Check if all files are the same type
         file_types = set()
@@ -73,13 +78,31 @@ class ZeroLogPlotter:
         
         # Always use LogData merging for intelligent duplicate removal
         # Convert CSV files to LogData objects first if needed
-        return cls._merge_using_logdata(input_files, file_type, start_time=start_time, end_time=end_time)
+        return cls._merge_using_logdata(input_files, file_type,
+                                        start_time=start_time,
+                                        end_time=end_time,
+                                        utc_offset_hours=utc_offset_hours)
 
     @classmethod
-    def _merge_using_logdata(cls, input_files: List[str], file_type: str, start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None):
+    def _merge_using_logdata(cls, input_files: List[str], file_type: str,
+                             start_time: Optional['datetime'] = None,
+                             end_time: Optional['datetime'] = None,
+                             utc_offset_hours: Optional['int'] = None):
         """Merge multiple files using LogData merge functionality for intelligent duplicate removal."""
         print(f"Loading and merging {len(input_files)} files using LogData merge operators...")
         
+        from .utils import get_local_timezone_offset
+        if isinstance(utc_offset_hours, int):
+            timezone_offset = utc_offset_hours * 60 * 60
+        elif utc_offset_hours is not None:
+            try:
+                timezone_offset = float(utc_offset_hours) * 60 * 60
+            except (ValueError, TypeError):
+                timezone_offset = get_local_timezone_offset()
+        else:
+            # Use local system timezone as default
+            timezone_offset = get_local_timezone_offset()
+
         try:
             log_data_objects = []
             log_file_types = set()  # Track what types of logs we have
@@ -90,7 +113,7 @@ class ZeroLogPlotter:
                 if file_type == 'binary':
                     # Load binary file directly
                     log_file = LogFile(input_file)
-                    log_data = LogData(log_file)
+                    log_data = LogData(log_file, timezone_offset)
                     
                     # Track log file type for basename generation
                     if log_file.is_mbb():
@@ -141,7 +164,8 @@ class ZeroLogPlotter:
             merged_log_data.emit_tabular_decoding(temp_csv.name, out_format='csv')
             
             # Create plotter instance with merged CSV
-            plotter = cls(temp_csv.name, start_time=start_time, end_time=end_time)
+            plotter = cls(temp_csv.name, start_time=start_time,
+                          end_time=end_time, utc_offset_hours=utc_offset_hours)
             
             # Generate meaningful filename from VIN, log types, and latest date
             base_name = cls._generate_merged_basename(merged_log_data, temp_csv.name, log_file_types)
@@ -400,7 +424,8 @@ class ZeroLogPlotter:
         
         # Parse binary to CSV using the core module
         try:
-            parse_log(self.input_file, temp_csv.name, output_format='csv')
+            parse_log(self.input_file, temp_csv.name,
+                      utc_offset_hours=self.utc_offset_hours, output_format='csv')
             self.csv_file = temp_csv.name
             self._load_from_csv()
         finally:
