@@ -367,6 +367,7 @@ tags
 
 # CLAUDE.md should not be ignored - it's documentation
 CLAUDE.md
+AGENTS.md
 
 plots/*.html
 
