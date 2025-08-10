@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zero-log-parser"
-version = "2.2.0"
+version = "2.3.0-dev"
 description = "A modern parser for Zero Motorcycle log files with structured data extraction"
 readme = "README.md"
 license = {text = "MIT"}
