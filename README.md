@@ -340,24 +340,31 @@ parse_log(
 ### Output Formats
 
 #### Text Format (default)
-Human-readable format similar to Zero's official parser:
+Human-readable format with intelligent structured data formatting:
 ```
 Entry     Timestamp            Level     Event                    Conditions
-6490      2025-08-03 12:34:32  DATA      Firmware Version         {"revision": 48, ...}
+00006     2025-08-03 12:42:34  DATA      Discharge level          Amp Hours: 7, State Of Charge Percent: 94%, Current Amps: 1A, Voltage Low Cell Volts: 4.05V, Pack Temp Celsius: 21°C
+06499     2025-08-03 12:34:38  INFO      Contactor drive turned on  Pack V: 113.5V, Switched V: 100.1V, Duty Cycle: 35%
 ```
+Features:
+- **Structured data**: Formatted as readable key-value pairs with automatic unit detection (%, V, A, mA, mV, °C)
+- **Regular conditions**: Preserved as original text
+- **Smart formatting**: Snake_case keys converted to "Title Case"
 
 #### CSV Format
-Comma-separated values for spreadsheet import:
+Comma-separated values with JSON-encoded structured data:
 ```csv
-Entry,Timestamp,LogLevel,Event,Conditions
-6490,2025-08-03 12:34:32,DATA,Firmware Version,"{""revision"": 48, ...}"
+entry,timestamp,log_level,message,conditions,uninterpreted
+6,2025-08-03 12:42:34,DATA,Discharge level,"{""amp_hours"":7,""state_of_charge_percent"":94,""current_amps"":1,""voltage_low_cell_volts"":4.05}",
+6499,2025-08-03 12:34:38,INFO,Contactor drive turned on,"Pack V:  113.5V, Switched V:  100.1V, Duty Cycle: 35%",
 ```
 
 #### TSV Format  
-Tab-separated values for data analysis:
+Tab-separated values with JSON-encoded structured data:
 ```tsv
-Entry	Timestamp	LogLevel	Event	Conditions
-6490	2025-08-03 12:34:32	DATA	Firmware Version	{"revision": 48, ...}
+entry	timestamp	log_level	message	conditions	uninterpreted
+6	2025-08-03 12:42:34	DATA	Discharge level	{"amp_hours":7,"state_of_charge_percent":94,"current_amps":1}	
+6499	2025-08-03 12:34:38	INFO	Contactor drive turned on	Pack V:  113.5V, Switched V:  100.1V, Duty Cycle: 35%	
 ```
 
 #### JSON Format
@@ -371,16 +378,32 @@ Structured JSON with metadata and parsed telemetry:
   },
   "entries": [
     {
-      "entry_number": 6490,
-      "timestamp": "2025-08-03 12:34:32",
+      "entry_number": 6,
+      "timestamp": "2025-08-03 12:42:34",
+      "sort_timestamp": 1754217754.0,
       "log_level": "DATA",
-      "event": "Firmware Version",
+      "event": "Discharge level",
+      "conditions": null,
+      "uninterpreted": null,
       "is_structured_data": true,
       "structured_data": {
-        "revision": 48,
-        "build_date": "2024-11-17",
-        "build_time": "14:19:50"
+        "amp_hours": 7,
+        "state_of_charge_percent": 94,
+        "current_amps": 1,
+        "voltage_low_cell_volts": 4.05,
+        "pack_temp_celsius": 21,
+        "mode": "Bike On"
       }
+    },
+    {
+      "entry_number": 6499,
+      "timestamp": "2025-08-03 12:34:38",
+      "sort_timestamp": 1754217278.0,
+      "log_level": "INFO",
+      "event": "Contactor drive turned on",
+      "conditions": "Pack V:  113.5V, Switched V:  100.1V, Duty Cycle: 35%",
+      "uninterpreted": null,
+      "is_structured_data": false
     }
   ]
 }
@@ -388,8 +411,14 @@ Structured JSON with metadata and parsed telemetry:
 
 ## Structured Data Features
 
-The parser automatically detects and converts various message types to structured JSON:
+The parser automatically detects and converts various message types to structured data across all output formats:
 
+### Format-Specific Structured Data Output
+- **JSON Format**: Parsed into individual `structured_data` object fields
+- **CSV/TSV Format**: JSON-encoded string in `conditions` column for programmatic parsing
+- **TXT Format**: Human-readable key-value pairs with automatic unit formatting
+
+### Supported Structured Data Types
 - **Firmware Version**: Build info, revision, timestamps
 - **Battery Pack Configuration**: Pack type, brick count, specifications  
 - **Discharge Level**: SOC, current, voltage, temperature data
@@ -398,6 +427,12 @@ The parser automatically detects and converts various message types to structure
 - **Charging/Riding Status**: Comprehensive telemetry during operation
 - **Tipover Detection**: Sensor data with roll/pitch measurements
 - **Error Conditions**: Structured fault and diagnostic information
+
+### Recent Architecture Improvements (v2.3.0+)
+- **Centralized Processing**: Unified parsing logic across all output formats (~240 lines of code eliminated)
+- **Enhanced TXT Formatting**: Smart unit detection and readable key formatting
+- **Consistent CSV Output**: Reliable JSON encoding of structured data
+- **Backward Compatibility**: All existing output formats preserved
 
 **📖 Complete JSON Structure Documentation**: See [JSON_STRUCTURE.md](JSON_STRUCTURE.md) for comprehensive documentation of all structured data formats, including:
 - 20 unique structured event types (9 MBB, 11 BMS)
