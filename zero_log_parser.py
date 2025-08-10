@@ -21,10 +21,11 @@ import re
 import string
 import struct
 from collections import OrderedDict, namedtuple
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from math import trunc
 from time import gmtime, localtime, strftime
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
 
 # Parser version - try to import from package, fallback to hardcoded
 try:
@@ -54,6 +55,19 @@ except ImportError:
     except ImportError:
         pass
 
+
+@dataclass
+class ProcessedLogEntry:
+    """Standardized log entry structure for all output formats"""
+    entry_number: int
+    timestamp: str
+    sort_timestamp: float
+    log_level: str
+    event: str
+    conditions: str
+    uninterpreted: str = ""
+    structured_data: Optional[dict] = None
+    has_structured_data: bool = False
 
 
 def improve_message_parsing(event_text: str, conditions_text: str = None) -> tuple:
@@ -2043,6 +2057,130 @@ class LogData(object):
             # If all parsing fails, return epoch
             return datetime.fromtimestamp(0)
     
+    def _collect_and_process_entries(self, logger=None, start_time=None, end_time=None):
+        """
+        Centralized method to collect, parse, filter, and sort all log entries.
+        Returns a list of ProcessedLogEntry objects ready for output formatting.
+        """
+        if not logger:
+            logger = logger_for_input(self.log_file.file_path)
+        
+        processed_entries = []
+        
+        if self.log_version < REV2 or self.log_version == REV3:
+            # Handle REV0/REV1/REV3 formats - collect and sort entries
+            collected_entries = []
+            read_pos = 0
+            
+            if hasattr(self, 'entries_count'):
+                for entry_num in range(self.entries_count):
+                    try:
+                        (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
+                                                                              0,  # unhandled counter
+                                                                              timezone_offset=self.timezone_offset,
+                                                                              logger=logger)
+                        
+                        # Extract timestamp for sorting
+                        time_str = entry_payload.get('time', '0')
+                        if time_str.isdigit():
+                            sort_timestamp = int(time_str)
+                        else:
+                            try:
+                                try:
+                                    parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
+                                except ValueError:
+                                    parsed_time = datetime.strptime(time_str, '%m/%d/%Y %H:%M:%S')
+                                if parsed_time.year > 2030:
+                                    sort_timestamp = 0
+                                else:
+                                    sort_timestamp = parsed_time.timestamp()
+                            except:
+                                sort_timestamp = 0
+                        
+                        collected_entries.append((sort_timestamp, entry_payload, entry_num))
+                        read_pos += length
+                    except Exception as e:
+                        logger.warning(f'Error parsing entry {entry_num}: {e}')
+                        break
+                
+                # Apply timestamp interpolation before sorting
+                collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
+                
+                # Apply time filtering if specified
+                if start_time or end_time:
+                    collected_entries = self._filter_collected_entries(collected_entries, start_time, end_time)
+                    logger.info(f"Filtered to {len(collected_entries)} entries based on time range")
+                
+                # Sort by timestamp (newest first)
+                collected_entries.sort(key=lambda x: x[0], reverse=True)
+                
+                # Process sorted entries into ProcessedLogEntry objects
+                for line_num, (sort_timestamp, entry_payload, original_entry_num) in enumerate(collected_entries):
+                    message = entry_payload.get('event', '')
+                    conditions = entry_payload.get('conditions', '')
+                    log_level = entry_payload.get('log_level', 'INFO')
+                    
+                    # Apply improved message parsing
+                    improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
+                    
+                    # Parse structured data if available
+                    structured_data = None
+                    if improved_conditions and improved_conditions.startswith('{'):
+                        try:
+                            structured_data = json.loads(improved_conditions)
+                            improved_conditions = None  # Remove redundant text version
+                        except json.JSONDecodeError:
+                            pass  # Keep as text if JSON parsing fails
+                    
+                    processed_entry = ProcessedLogEntry(
+                        entry_number=original_entry_num + 1,
+                        timestamp=entry_payload.get('time', ''),
+                        sort_timestamp=sort_timestamp if sort_timestamp > 0 else None,
+                        log_level=log_level,
+                        event=improved_message,
+                        conditions=improved_conditions if improved_conditions else "",
+                        uninterpreted="",
+                        structured_data=structured_data,
+                        has_structured_data=has_json_data
+                    )
+                    processed_entries.append(processed_entry)
+        
+        else:
+            # Handle REV2 (Gen3) format
+            for line, entry_payload in enumerate(self.entries):
+                try:
+                    entry = Gen3.payload_to_entry(entry_payload, logger=logger)
+                    
+                    # Apply improved message parsing
+                    improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(entry.event, entry.conditions)
+                    log_level = entry.log_level
+                    
+                    # Parse structured data if available
+                    structured_data = None
+                    if improved_conditions and improved_conditions.startswith('{'):
+                        try:
+                            structured_data = json.loads(improved_conditions)
+                            improved_conditions = None  # Remove redundant text version
+                        except json.JSONDecodeError:
+                            pass  # Keep as text if JSON parsing fails
+                    
+                    processed_entry = ProcessedLogEntry(
+                        entry_number=line + 1,
+                        timestamp=entry.time.strftime(ZERO_TIME_FORMAT),
+                        sort_timestamp=entry.time.timestamp(),
+                        log_level=log_level,
+                        event=improved_event,
+                        conditions=improved_conditions if improved_conditions else "",
+                        uninterpreted=entry.uninterpreted if entry.uninterpreted else "",
+                        structured_data=structured_data,
+                        has_structured_data=has_json_data
+                    )
+                    processed_entries.append(processed_entry)
+                except Exception as e:
+                    logger.warning(f'Error processing entry {line}: {e}')
+        
+        return processed_entries
+
     def _filter_collected_entries(self, collected_entries, start_time=None, end_time=None):
         """Filter collected entries by time range."""
         if not start_time and not end_time:
@@ -2363,6 +2501,9 @@ class LogData(object):
         
         if not logger:
             logger = logger_for_input(self.log_file.file_path)
+        
+        # Use centralized processing
+        processed_entries = self._collect_and_process_entries(logger, start_time, end_time)
             
         with open(tabular_output_file, 'w', encoding='utf-8') as output:
             def write_row(values):
@@ -2370,78 +2511,17 @@ class LogData(object):
 
             write_row(headers)
             
-            if self.log_version < REV2 or self.log_version == REV3:
-                # Handle REV0/REV1/REV3 formats - collect and sort entries
-                collected_entries = []
-                read_pos = 0
-                for entry_num in range(self.entries_count):
-                    (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
-                                                                          0,  # unhandled counter
-                                                                          timezone_offset=self.timezone_offset,
-                                                                          logger=logger)
-                    
-                    # Extract timestamp for sorting
-                    time_str = entry_payload.get('time', '0')
-                    if time_str.isdigit():
-                        sort_timestamp = int(time_str)
-                    else:
-                        try:
-                            from datetime import datetime
-                            try:
-                                parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
-                            except ValueError:
-                                parsed_time = datetime.strptime(time_str, '%m/%d/%Y %H:%M:%S')
-                            if parsed_time.year > 2030:
-                                sort_timestamp = 0
-                            else:
-                                sort_timestamp = parsed_time.timestamp()
-                        except:
-                            sort_timestamp = 0
-                    
-                    collected_entries.append((sort_timestamp, entry_payload, entry_num))
-                    read_pos += length
-                
-                # Apply timestamp interpolation before sorting
-                collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
-                
-                # Apply time filtering if specified
-                if start_time or end_time:
-                    collected_entries = self._filter_collected_entries(collected_entries, start_time, end_time)
-                    logger.info(f"Filtered to {len(collected_entries)} entries based on time range")
-                
-                # Sort by timestamp (newest first)
-                collected_entries.sort(key=lambda x: x[0], reverse=True)
-                
-                # Write sorted entries
-                for line_num, (sort_timestamp, entry_payload, original_entry_num) in enumerate(collected_entries):
-                    message = entry_payload.get('event', '')
-                    conditions = entry_payload.get('conditions', '')
-                    log_level = entry_payload.get('log_level', 'INFO')  # Use log_level from entry data
-                    
-                    # Apply improved message parsing
-                    improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
-                    
-                    row_values = [
-                        str(original_entry_num + 1),  # Keep original entry number
-                        entry_payload.get('time', ''),
-                        log_level,
-                        improved_message,
-                        improved_conditions,
-                        ''  # uninterpreted field for compatibility
-                    ]
-                    write_row([print_value_tabular(x) for x in row_values])
-            else:
-                # Handle REV2 (Gen3) format
-                for line, entry_payload in enumerate(self.entries):
-                    entry = Gen3.payload_to_entry(entry_payload, logger=logger)
-                    
-                    # Apply improved message parsing
-                    improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(entry.event, entry.conditions)
-                    log_level = entry.log_level  # Use log_level from entry data
-                    
-                    row_values = [line + 1, entry.time.isoformat(), log_level,
-                                  improved_event, improved_conditions, entry.uninterpreted]
-                    write_row([print_value_tabular(x) for x in row_values])
+            # Write processed entries
+            for entry in processed_entries:
+                row_values = [
+                    str(entry.entry_number),
+                    entry.timestamp,
+                    entry.log_level,
+                    entry.event,
+                    entry.conditions,
+                    entry.uninterpreted
+                ]
+                write_row([print_value_tabular(x) for x in row_values])
                     
         logger_for_input(self.log_file.file_path).info('Saved to %s', tabular_output_file)
 
@@ -2452,6 +2532,9 @@ class LogData(object):
         if not logger:
             logger = logger_for_input(self.log_file.file_path)
         
+        # Use centralized processing
+        processed_entries = self._collect_and_process_entries(logger, start_time, end_time)
+        
         # Prepare the JSON structure
         json_output = {
             'metadata': {
@@ -2460,7 +2543,7 @@ class LogData(object):
                 'parser_version': f'zero-log-parser-{PARSER_VERSION}',
                 'generated_at': datetime.now().isoformat(),
                 'timezone': f'UTC{self.timezone_offset/3600:+.1f}' if self.timezone_offset else 'UTC+0.0',
-                'total_entries': len(self.entries) if hasattr(self, 'entries') else 0
+                'total_entries': len(processed_entries)
             },
             'log_info': {
                 'vin': getattr(self, 'vin', 'Unknown'),
@@ -2473,119 +2556,24 @@ class LogData(object):
             'entries': []
         }
         
-        # Process entries based on log version
-        if self.log_version < REV2 or self.log_version == REV3:
-            # Handle REV0/REV1/REV3 formats - collect and sort entries
-            collected_entries = []
-            read_pos = 0
+        # Convert processed entries to JSON format
+        for entry in processed_entries:
+            json_entry = {
+                'entry_number': entry.entry_number,
+                'timestamp': entry.timestamp,
+                'sort_timestamp': entry.sort_timestamp,
+                'log_level': entry.log_level,
+                'event': entry.event,
+                'conditions': entry.conditions if entry.conditions else None,
+                'uninterpreted': entry.uninterpreted if entry.uninterpreted else None,
+                'is_structured_data': entry.has_structured_data
+            }
             
-            if hasattr(self, 'entries_count'):
-                for entry_num in range(self.entries_count):
-                    try:
-                        (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
-                                                                              0,  # unhandled counter
-                                                                              timezone_offset=self.timezone_offset,
-                                                                              logger=logger)
-                        
-                        # Extract timestamp for sorting
-                        time_str = entry_payload.get('time', '0')
-                        if time_str.isdigit():
-                            sort_timestamp = int(time_str)
-                        else:
-                            try:
-                                try:
-                                    parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
-                                except ValueError:
-                                    parsed_time = datetime.strptime(time_str, '%m/%d/%Y %H:%M:%S')
-                                if parsed_time.year > 2030:
-                                    sort_timestamp = 0
-                                else:
-                                    sort_timestamp = parsed_time.timestamp()
-                            except:
-                                sort_timestamp = 0
-                        
-                        collected_entries.append((sort_timestamp, entry_payload, entry_num))
-                        read_pos += length
-                    except Exception as e:
-                        logger.warning(f'Error parsing entry {entry_num}: {e}')
-                        break
-                
-                # Apply timestamp interpolation before sorting
-                collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
-                
-                # Apply time filtering if specified
-                if start_time or end_time:
-                    collected_entries = self._filter_collected_entries(collected_entries, start_time, end_time)
-                    logger.info(f"Filtered to {len(collected_entries)} entries based on time range")
-                
-                # Sort by timestamp (newest first)
-                collected_entries.sort(key=lambda x: x[0], reverse=True)
-                
-                # Process sorted entries
-                for line_num, (sort_timestamp, entry_payload, original_entry_num) in enumerate(collected_entries):
-                    message = entry_payload.get('event', '')
-                    conditions = entry_payload.get('conditions', '')
-                    log_level = entry_payload.get('log_level', 'INFO')
-                    
-                    # Apply improved message parsing
-                    improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
-                    
-                    # Create JSON entry
-                    json_entry = {
-                        'entry_number': original_entry_num + 1,
-                        'timestamp': entry_payload.get('time', ''),
-                        'sort_timestamp': sort_timestamp if sort_timestamp > 0 else None,
-                        'log_level': log_level,
-                        'event': improved_message,
-                        'conditions': improved_conditions if improved_conditions else None,
-                        'is_structured_data': has_json_data
-                    }
-                    
-                    # If conditions contain JSON, parse it for structured access
-                    if improved_conditions and improved_conditions.startswith('{'):
-                        try:
-                            json_entry['structured_data'] = json.loads(improved_conditions)
-                            json_entry['conditions'] = None  # Remove redundant text version
-                        except json.JSONDecodeError:
-                            pass  # Keep as text if JSON parsing fails
-                    
-                    json_output['entries'].append(json_entry)
-        else:
-            # Handle REV2 (Gen3) format
-            for line, entry_payload in enumerate(self.entries):
-                try:
-                    entry = Gen3.payload_to_entry(entry_payload, logger=logger)
-                    
-                    # Apply improved message parsing
-                    improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(entry.event, entry.conditions)
-                    log_level = entry.log_level
-                    
-                    # Create JSON entry
-                    json_entry = {
-                        'entry_number': line + 1,
-                        'timestamp': entry.time.strftime(ZERO_TIME_FORMAT),
-                        'sort_timestamp': entry.time.timestamp(),
-                        'log_level': log_level,
-                        'event': improved_event,
-                        'conditions': improved_conditions if improved_conditions else None,
-                        'uninterpreted': entry.uninterpreted if entry.uninterpreted else None,
-                        'is_structured_data': has_json_data
-                    }
-                    
-                    # If conditions contain JSON, parse it for structured access
-                    if improved_conditions and improved_conditions.startswith('{'):
-                        try:
-                            json_entry['structured_data'] = json.loads(improved_conditions)
-                            json_entry['conditions'] = None  # Remove redundant text version
-                        except json.JSONDecodeError:
-                            pass  # Keep as text if JSON parsing fails
-                    
-                    json_output['entries'].append(json_entry)
-                except Exception as e:
-                    logger.warning(f'Error processing entry {line}: {e}')
-        
-        # Update metadata with actual entry count
-        json_output['metadata']['total_entries'] = len(json_output['entries'])
+            # Add structured data if available
+            if entry.structured_data:
+                json_entry['structured_data'] = entry.structured_data
+            
+            json_output['entries'].append(json_entry)
         
         # Write JSON output
         try:
@@ -2626,133 +2614,52 @@ class LogData(object):
             write_line('{0:18} {1}'.format('Timezone', tz_str))
             write_line()
 
-            write_line('Printing {0} of {0} log entries..'.format(self.entries_count))
+            # Use centralized processing
+            processed_entries = self._collect_and_process_entries(logger, start_time, end_time)
+            
+            write_line('Printing {0} of {0} log entries..'.format(len(processed_entries)))
             write_line()
             write_line(' Entry    Time of Log            Level     Event                      Conditions')
             f.write(self.header_divider)
 
-            unhandled = 0
+            # Track unknown entries for compatibility with original logic
             unknown_entries = 0
             unknown = []
-            if self.log_version < REV2 or self.log_version == REV3:
-                # First pass: collect all entries with their timestamps for sorting
-                collected_entries = []
-                read_pos = 0
-                for entry_num in range(self.entries_count):
-                    (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
-                                                                          unhandled,
-                                                                          timezone_offset=self.timezone_offset,
-                                                                          logger=logger)
-                    
-                    # Extract timestamp for sorting (handle both string and numeric timestamps)
-                    time_str = entry_payload.get('time', '0')
-                    if time_str.isdigit():
-                        # Numeric timestamp (invalid/zero timestamps) - assign very low priority
-                        sort_timestamp = int(time_str)
+            
+            # Output processed entries with zero-compatible formatting
+            for entry in processed_entries:
+                line_prefix = (self.output_line_number_field(entry.entry_number)
+                               + self.output_time_field(entry.timestamp)
+                               + f'  {entry.log_level:8}')
+                
+                if entry.conditions:
+                    if '???' in entry.conditions:
+                        u = entry.conditions[0]
+                        unknown_entries += 1
+                        if u not in unknown:
+                            unknown.append(u)
+                        conditions_display = '???'
+                        write_line(
+                            line_prefix + '   {message} {conditions}'.format(
+                                message=entry.event, conditions=conditions_display))
                     else:
-                        # Parse timestamp string to get sortable value
-                        try:
-                            from datetime import datetime
-                            # Try new format first, then fall back to old format
-                            try:
-                                parsed_time = datetime.strptime(time_str, ZERO_TIME_FORMAT)
-                            except ValueError:
-                                # Fall back to old format for compatibility
-                                parsed_time = datetime.strptime(time_str, '%m/%d/%Y %H:%M:%S')
-                            # Filter out obviously invalid future dates (beyond 2030)
-                            if parsed_time.year > 2030:
-                                sort_timestamp = 0  # Treat as invalid
-                            else:
-                                sort_timestamp = parsed_time.timestamp()
-                        except:
-                            sort_timestamp = 0
-                    
-                    collected_entries.append((sort_timestamp, entry_payload, entry_num))
-                    read_pos += length
-                
-                # Apply timestamp interpolation before sorting
-                collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
-                
-                # Apply time filtering if specified
-                if start_time or end_time:
-                    collected_entries = self._filter_collected_entries(collected_entries, start_time, end_time)
-                    logger.info(f"Filtered to {len(collected_entries)} entries based on time range")
-                
-                # Sort entries by timestamp (newest first - descending order)
-                collected_entries.sort(key=lambda x: x[0], reverse=True)
-                
-                # Second pass: output sorted entries
-                for line_num, (sort_timestamp, entry_payload, original_entry_num) in enumerate(collected_entries):
-                    entry_payload['line'] = original_entry_num + 1  # Keep original entry number
-
-                    conditions = entry_payload.get('conditions')
-                    message = entry_payload.get('event', '')
-                    log_level = entry_payload.get('log_level', 'INFO')  # Use log_level from entry data
-                    
-                    # Apply improved message parsing
-                    improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
-                    
-                    line_prefix = (self.output_line_number_field(entry_payload['line'])
-                                   + self.output_time_field(entry_payload['time'])
-                                   + f'  {log_level:8}')
-                    
-                    if improved_conditions:
-                        if '???' in improved_conditions:
-                            u = improved_conditions[0]
-                            unknown_entries += 1
-                            if u not in unknown:
-                                unknown.append(u)
-                            improved_conditions = '???'
-                            write_line(
-                                line_prefix + '   {message} {conditions}'.format(
-                                    message=improved_message, conditions=improved_conditions))
-                        else:
-                            write_line(
-                                line_prefix + '   {message:25}  {conditions}'.format(
-                                    message=improved_message, conditions=improved_conditions))
-                    else:
-                        write_line(line_prefix + '   {message}'.format(message=improved_message))
-            else:
-                # Gen3 format (REV2) - collect entries and sort by timestamp
-                collected_gen3_entries = []
-                for line, entry_payload in enumerate(self.entries):
-                    entry = Gen3.payload_to_entry(entry_payload, logger=logger)
-                    collected_gen3_entries.append((entry.time.timestamp(), entry, line))
-                
-                # Apply time filtering if specified
-                if start_time or end_time:
-                    collected_gen3_entries = self._filter_gen3_entries(collected_gen3_entries, start_time, end_time)
-                    logger.info(f"Filtered to {len(collected_gen3_entries)} entries based on time range")
-                
-                # Sort by timestamp (newest first)
-                collected_gen3_entries.sort(key=lambda x: x[0], reverse=True)
-                
-                # Output sorted entries
-                for line_num, (timestamp, entry, original_line) in enumerate(collected_gen3_entries):
-                    conditions = entry.conditions
-                    log_level = entry.log_level  # Use log_level from entry data
-                    
-                    # Apply improved message parsing
-                    improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(entry.event, conditions)
-                    
-                    line_prefix = (self.output_line_number_field(original_line + 1)  # Keep original entry number
-                                   + self.output_time_field(entry.time.strftime(ZERO_TIME_FORMAT))
-                                   + f'  {log_level:8}')
-                    if improved_conditions:
-                        output_line = line_prefix + '   {event:25}  ({conditions}) [{uninterpreted}]'.format(
-                            event=improved_event,
-                            conditions=improved_conditions,
-                            uninterpreted=entry.uninterpreted)
-                    else:
-                        output_line = line_prefix + '   {event} [{uninterpreted}]'.format(
-                            event=improved_event,
-                            uninterpreted=entry.uninterpreted)
+                        write_line(
+                            line_prefix + '   {message:25}  {conditions}'.format(
+                                message=entry.event, conditions=entry.conditions))
+                elif entry.uninterpreted:
+                    # Handle Gen3 format with uninterpreted field
+                    output_line = line_prefix + '   {event} [{uninterpreted}]'.format(
+                        event=entry.event,
+                        uninterpreted=entry.uninterpreted)
                     if re.match(r'\s+\[', output_line):
                         raise ValueError()
                     write_line(output_line)
+                else:
+                    write_line(line_prefix + '   {message}'.format(message=entry.event))
+            
             write_line()
-        if unhandled > 0:
-            logger.info('%d exceptions in parser', unhandled)
+        
+        # Log statistics (compatibility with original logic)
         if unknown:
             logger.info('%d unknown entries of types %s',
                         unknown_entries,
