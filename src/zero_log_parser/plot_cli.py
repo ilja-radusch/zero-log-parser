@@ -44,7 +44,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="Filter data until this time (e.g., 'last week', 'July 2025', '2025-07-31')"
     )
     
-    parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET). Defaults to local system timezone.')
+    parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET) or timezone name (e.g., Europe/Berlin, America/New_York). Defaults to local system timezone.')
 
     parser.add_argument(
         '--version',

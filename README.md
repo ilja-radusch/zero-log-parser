@@ -9,7 +9,7 @@ This tool parses binary-encoded event logs from Zero Motorcycles' main bike boar
 - **Multiple Output Formats**: Text, CSV, TSV, and JSON
 - **Interactive Data Visualization**: Generate rich HTML plots for data analysis
 - **Structured Data Extraction**: Automatically converts telemetry data to structured JSON format
-- **Timezone Support**: Configurable timezone handling with system default
+- **Advanced Timezone Support**: Hour offsets (`-8`, `+1`) and named timezones (`Europe/Berlin`, `America/New_York`) with automatic DST handling
 - **Modern Python Package**: Built for Python 3.10+ with type hints and modern packaging
 - **CLI and Library**: Use as command-line tool or import as Python library
 - **Enhanced Parsing**: Improved message parsing with descriptive event names and structured sensor data
@@ -75,29 +75,38 @@ The package provides multiple CLI commands: `zero-log-parser` and `zlp` (short a
 
 ```bash
 # Parse to text format (default)
-zero-log-parser logfile.bin
+zero-log-parser log_data/logfile.bin
 
 # Specify output file
-zero-log-parser logfile.bin -o output.txt
+zero-log-parser log_data/logfile.bin -o output.txt
 
 # Different output formats
-zero-log-parser logfile.bin -f csv -o output.csv
-zero-log-parser logfile.bin -f tsv -o output.tsv
-zero-log-parser logfile.bin -f json -o output.json
+zero-log-parser log_data/logfile.bin -f csv -o output.csv
+zero-log-parser log_data/logfile.bin -f tsv -o output.tsv
+zero-log-parser log_data/logfile.bin -f json -o output.json
 ```
 
 #### Advanced Options
 
 ```bash
-# Custom timezone (UTC offset in hours)
-zero-log-parser logfile.bin --timezone -8  # PST
-zero-log-parser logfile.bin --timezone 1   # CET
+# Timezone support - Hour offsets
+zero-log-parser log_data/logfile.bin --timezone -8  # PST (UTC-8)
+zero-log-parser log_data/logfile.bin --timezone 1   # CET (UTC+1)
+
+# Timezone support - Named timezones (with automatic DST handling)
+zero-log-parser log_data/logfile.bin --timezone Europe/Berlin     # German timezone
+zero-log-parser log_data/logfile.bin --timezone America/New_York  # US Eastern
+zero-log-parser log_data/logfile.bin --timezone Asia/Tokyo        # Japan timezone
+zero-log-parser log_data/logfile.bin --timezone UTC               # Coordinated Universal Time
+
+# Multiple files with timezone
+zero-log-parser log_data/*.bin --timezone Europe/London -f json
 
 # Verbose output
-zero-log-parser logfile.bin --verbose
+zero-log-parser log_data/logfile.bin --verbose
 
 # Short alias
-zlp logfile.bin -f json -o structured_data.json
+zlp log_data/logfile.bin -f json -o structured_data.json
 ```
 
 #### Interactive Plotting
@@ -110,31 +119,38 @@ Generate rich HTML visualizations of your motorcycle data using the `zero-plotti
 # Or: pip install plotly pandas
 
 # Generate all available plots from a single file
-zero-plotting logfile.bin --plot all
+zero-plotting log_data/logfile.bin --plot all
 
 # Generate specific plot types
-zero-plotting logfile.bin --plot battery      # Battery SOC and health
-zero-plotting logfile.bin --plot power       # Power consumption analysis
-zero-plotting logfile.bin --plot range       # Range estimation and efficiency
-zero-plotting logfile.bin --plot performance # RPM vs efficiency analysis
-zero-plotting logfile.bin --plot thermal     # Temperature monitoring
-zero-plotting logfile.bin --plot voltage     # Voltage analysis
-zero-plotting logfile.bin --plot charging    # Charging session & recuperation analysis
-zero-plotting logfile.bin --plot balance     # Cell balance health
+zero-plotting log_data/logfile.bin --plot battery      # Battery SOC and health
+zero-plotting log_data/logfile.bin --plot power       # Power consumption analysis
+zero-plotting log_data/logfile.bin --plot range       # Range estimation and efficiency
+zero-plotting log_data/logfile.bin --plot performance # RPM vs efficiency analysis
+zero-plotting log_data/logfile.bin --plot thermal     # Temperature monitoring
+zero-plotting log_data/logfile.bin --plot voltage     # Voltage analysis
+zero-plotting log_data/logfile.bin --plot charging    # Charging session & recuperation analysis
+zero-plotting log_data/logfile.bin --plot balance     # Cell balance health
 
 # Plot data from multiple log files (merged automatically)
-zero-plotting file1.bin file2.bin file3.bin --plot all
-zero-plotting *.bin --plot battery          # Use shell expansion for multiple files
-zero-plotting logs/*.bin --plot thermal     # Plot from all .bin files in directory
+zero-plotting log_data/file1.bin log_data/file2.bin log_data/file3.bin --plot all
+zero-plotting log_data/*.bin --plot battery          # Use shell expansion for multiple files
+
+# Timezone support in plotting
+zero-plotting log_data/logfile.bin --plot thermal --timezone Europe/Berlin
+zero-plotting log_data/*.bin --plot voltage --timezone America/New_York
 
 # Specify output directory for HTML plots
-zero-plotting logfile.bin --plot all --output-dir ./plots
+zero-plotting log_data/logfile.bin --plot all --output-dir ./plots
 
 # Time filtering examples (works with single or multiple files)
-zero-plotting logfile.bin --plot thermal --start "last month"
-zero-plotting file1.bin file2.bin --plot battery --start "June 2025" --end "July 2025"
-zero-plotting *.bin --plot power --start "2025-06-15" --end "2025-06-20"
-zero-plotting logs/*.bin --plot range --start "last 30 days"
+zero-plotting log_data/logfile.bin --plot thermal --start "last month"
+zero-plotting log_data/file1.bin log_data/file2.bin --plot battery --start "June 2025" --end "July 2025"
+zero-plotting log_data/*.bin --plot power --start "2025-06-15" --end "2025-06-20"
+zero-plotting log_data/*.bin --plot range --start "last 30 days"
+
+# Combine timezone and time filtering
+zero-plotting log_data/*.bin --plot charging --start "June 2025" --timezone Europe/Berlin
+zero-plotting log_data/logfile.bin --plot thermal --start "last week" --timezone America/New_York
 ```
 
 **Multiple File Support:**
@@ -163,22 +179,58 @@ The `zero-plotting` command supports flexible time filtering using `--start` and
 **Usage Examples:**
 ```bash
 # Filter data from the last month only
-zero-plotting logs.bin --plot thermal --start "last month"
+zero-plotting log_data/logs.bin --plot thermal --start "last month"
 
-# Filter data for a specific month
-zero-plotting logs.bin --plot battery --start "June 2025" --end "July 2025"
+# Filter data for a specific month with timezone
+zero-plotting log_data/logs.bin --plot battery --start "June 2025" --end "July 2025" --timezone Europe/Berlin
 
 # Filter data for a specific date range
-zero-plotting logs.bin --plot power --start "2025-06-15" --end "2025-06-20"
+zero-plotting log_data/logs.bin --plot power --start "2025-06-15" --end "2025-06-20"
 
-# Filter data from a specific date until now
-zero-plotting logs.bin --plot range --start "2025-06-01"
+# Filter data from a specific date until now with timezone
+zero-plotting log_data/logs.bin --plot range --start "2025-06-01" --timezone America/New_York
 ```
+
+#### Timezone Support
+
+Both `zero-log-parser` and `zero-plotting` support comprehensive timezone handling:
+
+**Default Behavior:**
+- Uses your system's local timezone automatically
+- MBB (Main Bike Board) timestamps are automatically adjusted from their hardcoded GMT-7 offset
+
+**Override Options:**
+```bash
+# Hour offsets from UTC
+zero-log-parser log_data/logfile.bin --timezone -8    # Pacific Standard Time (PST)
+zero-log-parser log_data/logfile.bin --timezone 1     # Central European Time (CET)
+
+# Named timezones (with automatic DST handling)
+zero-log-parser log_data/logfile.bin --timezone Europe/Berlin      # German time
+zero-log-parser log_data/logfile.bin --timezone America/New_York   # US Eastern time
+zero-log-parser log_data/logfile.bin --timezone Asia/Tokyo         # Japan time
+zero-log-parser log_data/logfile.bin --timezone UTC                # Universal time
+
+# Same options work for plotting
+zero-plotting log_data/*.bin --plot thermal --timezone Europe/London
+```
+
+**Common Timezone Names:**
+- `UTC` - Coordinated Universal Time
+- `US/Pacific`, `US/Eastern`, `US/Central`, `US/Mountain` - US time zones
+- `Europe/London`, `Europe/Berlin`, `Europe/Paris` - European time zones
+- `Asia/Tokyo`, `Asia/Singapore`, `Asia/Shanghai` - Asian time zones
+
+**Benefits:**
+- Accurate temporal correlation when analyzing logs from different locations
+- Automatic handling of Daylight Saving Time transitions for named timezones
+- Consistent time display across parsing and plotting tools
 
 #### Help
 
 ```bash
 zero-log-parser --help
+zero-plotting --help
 ```
 
 ### Python Library
@@ -187,7 +239,7 @@ zero-log-parser --help
 from zero_log_parser import LogData, parse_log
 
 # Parse a log file
-log_data = LogData("path/to/logfile.bin")
+log_data = LogData("log_data/logfile.bin")
 
 # Access parsed data
 print(f"Entries: {log_data.entries_count}")
@@ -197,12 +249,20 @@ print(f"Header: {log_data.header_info}")
 text_output = log_data.emit_text_decoding()
 json_output = log_data.emit_json_decoding()
 
-# Or use the high-level function
+# Or use the high-level function with timezone support
 parse_log(
-    log_file="input.bin",
-    output_file="output.json",
+    log_file="log_data/input.bin",
+    output_file="output.json", 
     output_format="json",
-    timezone_offset=-8  # PST
+    tz_code=-8  # PST as hour offset
+)
+
+# Or with named timezone
+parse_log(
+    log_file="log_data/input.bin",
+    output_file="output.json",
+    output_format="json", 
+    tz_code="Europe/Berlin"  # Named timezone
 )
 ```
 
@@ -329,6 +389,22 @@ Correlates motor RPM with battery current consumption, colored by state of charg
 Analyzes energy consumption patterns across distance traveled, with current draw indicators for riding efficiency assessment.
 
 ![Range Analysis](plots/range_analysis.png)
+
+## Sample Data
+
+The repository includes sample Zero Motorcycle log files in the `log_data/` directory for testing and demonstration purposes. These files contain real motorcycle telemetry data from multiple VINs and date ranges, including both MBB (Main Bike Board) and BMS (Battery Management System) logs.
+
+**Examples using sample data:**
+```bash
+# Parse sample logs
+zero-log-parser log_data/*.bin -f json
+
+# Generate plots from samples  
+zero-plotting log_data/*.bin --plot battery --output-dir ./plots
+
+# Time-filtered analysis of samples
+zero-plotting log_data/*.bin --plot thermal --start "2025-08-01" --timezone UTC
+```
 
 ## Development
 

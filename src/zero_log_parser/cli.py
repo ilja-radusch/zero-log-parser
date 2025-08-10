@@ -39,8 +39,7 @@ def create_parser() -> argparse.ArgumentParser:
     
     parser.add_argument(
         '-t', '--timezone',
-        type=float,
-        help="Timezone offset in hours from UTC (default: system timezone)"
+        help="Timezone offset in hours from UTC (e.g., -8, +1) or timezone name (e.g., Europe/Berlin, America/New_York). Default: system timezone"
     )
     
     parser.add_argument(
