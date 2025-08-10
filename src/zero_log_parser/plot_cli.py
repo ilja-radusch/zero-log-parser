@@ -36,12 +36,17 @@ def create_parser() -> argparse.ArgumentParser:
     
     parser.add_argument(
         '--start',
-        help="Filter data from this time (e.g., 'last month', 'June 2025', '2025-06-15')"
+        help="Filter data from this time (e.g., 'last month', 'June 2025', '2025-06-15'). Uses start-of-period semantics: 'June 2025' becomes 2025-06-01 00:00:00."
     )
     
     parser.add_argument(
         '--end',
-        help="Filter data until this time (e.g., 'last week', 'July 2025', '2025-07-31')"
+        help="Filter data until this time (e.g., 'last week', 'July 2025', '2025-07-31'). Uses end-of-period semantics: 'June 2025' becomes 2025-06-30 23:59:59."
+    )
+    
+    parser.add_argument(
+        '--start-end',
+        help="Set both start and end times for a period (e.g., 'June 2025' sets June 1-30, '2025-06-15' sets that full day). Takes precedence over individual --start/--end flags."
     )
     
     parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET) or timezone name (e.g., Europe/Berlin, America/New_York). Defaults to local system timezone.')
@@ -71,27 +76,41 @@ def main() -> int:
             print("Install with: pip install -e \".[plotting]\"", file=sys.stderr)
             return 1
         
-        # Parse time filters
+        # Parse time filters with enhanced semantics and timezone support
         start_time = None
         end_time = None
         
         tz_code = args.timezone
 
-        if args.start or args.end:
-            from .utils import parse_time_filter
+        if args.start_end:
+            # --start-end shorthand takes precedence
+            if args.start or args.end:
+                print("Warning: --start-end overrides individual --start/--end flags", file=sys.stderr)
+            
+            from .utils import parse_time_range
+            
+            try:
+                start_time, end_time = parse_time_range(args.start_end, tz_code)
+                print(f"Filtering period: {start_time.strftime('%Y-%m-%d %H:%M:%S %Z') if start_time else 'None'} to {end_time.strftime('%Y-%m-%d %H:%M:%S %Z') if end_time else 'None'}")
+            except ValueError as e:
+                print(f"Error parsing time range: {e}", file=sys.stderr)
+                return 1
+        elif args.start or args.end:
+            # Individual start/end flags with improved semantics
+            from .utils import parse_time_filter_start, parse_time_filter_end
             
             if args.start:
                 try:
-                    start_time = parse_time_filter(args.start)
-                    print(f"Filtering data from: {start_time}")
+                    start_time = parse_time_filter_start(args.start, tz_code)
+                    print(f"Filtering data from: {start_time.strftime('%Y-%m-%d %H:%M:%S %Z') if start_time else 'None'}")
                 except ValueError as e:
                     print(f"Error parsing start time: {e}", file=sys.stderr)
                     return 1
             
             if args.end:
                 try:
-                    end_time = parse_time_filter(args.end)
-                    print(f"Filtering data until: {end_time}")
+                    end_time = parse_time_filter_end(args.end, tz_code)
+                    print(f"Filtering data until: {end_time.strftime('%Y-%m-%d %H:%M:%S %Z') if end_time else 'None'}")
                 except ValueError as e:
                     print(f"Error parsing end time: {e}", file=sys.stderr)
                     return 1
