@@ -121,7 +121,7 @@ fabric.properties
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
 
 # Thumbnails
 ._*
@@ -355,13 +355,19 @@ tags
 
 # End of https://www.toptal.com/developers/gitignore/api/vim,venv,macos,python,jetbrains
 
-# Zero Log files
-**.bin
-**.csv
-**.txt
-**.tsv
-**.json
+# Zero Log parser generated output files
+# Allow sample logs in log_data/ but ignore generated output
+*.csv
+*.txt
+*.tsv
+*.json
+*.bin
+# Exclude sample log files from this rule
+# !log_data/*.bin
 
+# CLAUDE.md should not be ignored - it's documentation
 CLAUDE.md
 
 plots/*.html
+
+.idea/
