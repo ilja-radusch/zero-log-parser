@@ -43,6 +43,21 @@ def create_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument(
+        '--start',
+        help="Filter entries after this time (e.g., 'June 2025', '2025-06-15', 'last month')"
+    )
+    
+    parser.add_argument(
+        '--end', 
+        help="Filter entries before this time (e.g., 'June 2025', '2025-06-15', 'last month')"
+    )
+    
+    parser.add_argument(
+        '--start-end',
+        help="Filter entries within this period (e.g., 'June 2025' sets both start and end boundaries automatically)"
+    )
+    
+    parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help="Enable verbose output"
@@ -115,6 +130,35 @@ def main() -> int:
         # Validate input files
         validate_input_files(args.input_files)
         
+        # Parse time filtering parameters
+        start_time = None
+        end_time = None
+        
+        # Handle --start-end shorthand
+        if args.start_end:
+            if args.start or args.end:
+                parser.error("--start-end cannot be used with --start or --end")
+            try:
+                from .utils import parse_time_range
+                start_time, end_time = parse_time_range(args.start_end, args.timezone)
+            except Exception as e:
+                parser.error(f"Invalid --start-end time specification: {e}")
+        else:
+            # Handle individual --start and --end parameters
+            if args.start:
+                try:
+                    from .utils import parse_time_filter_start
+                    start_time = parse_time_filter_start(args.start, args.timezone)
+                except Exception as e:
+                    parser.error(f"Invalid --start time specification: {e}")
+            
+            if args.end:
+                try:
+                    from .utils import parse_time_filter_end
+                    end_time = parse_time_filter_end(args.end, args.timezone)
+                except Exception as e:
+                    parser.error(f"Invalid --end time specification: {e}")
+        
         # Determine output file
         output_file = determine_output_file(args.input_files, args.output, args.format)
         
@@ -135,7 +179,9 @@ def main() -> int:
                 tz_code=args.timezone,
                 verbose=args.verbose,
                 logger=logger,
-                output_format=args.format
+                output_format=args.format,
+                start_time=start_time,
+                end_time=end_time
             )
         else:
             # Multiple file parsing with merging
@@ -147,7 +193,9 @@ def main() -> int:
                 tz_code=args.timezone,
                 verbose=args.verbose,
                 logger=logger,
-                output_format=args.format
+                output_format=args.format,
+                start_time=start_time,
+                end_time=end_time
             )
         
         logger.info("Parsing completed successfully")

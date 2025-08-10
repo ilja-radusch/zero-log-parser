@@ -2025,6 +2025,95 @@ class LogData(object):
         self.timezone_offset = timezone_offset
         self.log_version, self.header_info = self.get_version_and_header(log_file)
         self.entries_count, self.entries = self.get_entries_and_counts(log_file)
+        
+    def _parse_entry_timestamp(self, time_str: str) -> datetime:
+        """Parse entry timestamp string into datetime object."""
+        if time_str.isdigit():
+            # Invalid/zero timestamp - return epoch
+            return datetime.fromtimestamp(0)
+        
+        try:
+            # Try new ISO format first
+            try:
+                return datetime.strptime(time_str, ZERO_TIME_FORMAT)
+            except ValueError:
+                # Fall back to old format for compatibility
+                return datetime.strptime(time_str, '%m/%d/%Y %H:%M:%S')
+        except ValueError:
+            # If all parsing fails, return epoch
+            return datetime.fromtimestamp(0)
+    
+    def _filter_collected_entries(self, collected_entries, start_time=None, end_time=None):
+        """Filter collected entries by time range."""
+        if not start_time and not end_time:
+            return collected_entries
+        
+        filtered_entries = []
+        for sort_timestamp, entry_payload, entry_num in collected_entries:
+            # Parse entry timestamp
+            time_str = entry_payload.get('time', '0')
+            entry_time = self._parse_entry_timestamp(time_str)
+            
+            # Skip obviously invalid timestamps (year > 2030 or epoch)
+            if entry_time.year > 2030 or entry_time.year == 1970:
+                filtered_entries.append((sort_timestamp, entry_payload, entry_num))
+                continue
+            
+            # Apply timezone to entry timestamp for comparison
+            try:
+                # Try to import timezone utilities
+                try:
+                    from src.zero_log_parser.utils import apply_timezone_to_datetime
+                    entry_time_tz = apply_timezone_to_datetime(entry_time, None)  # Use system timezone
+                except ImportError:
+                    # Fallback - assume local timezone
+                    entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
+            except:
+                # Last fallback - use naive datetime
+                entry_time_tz = entry_time
+            
+            # Apply filters
+            if start_time and entry_time_tz < start_time:
+                continue
+            if end_time and entry_time_tz > end_time:
+                continue
+                
+            filtered_entries.append((sort_timestamp, entry_payload, entry_num))
+        
+        return filtered_entries
+    
+    def _filter_gen3_entries(self, collected_gen3_entries, start_time=None, end_time=None):
+        """Filter Gen3 entries by time range."""
+        if not start_time and not end_time:
+            return collected_gen3_entries
+        
+        filtered_entries = []
+        for timestamp, entry, line in collected_gen3_entries:
+            # Convert timestamp to datetime object
+            entry_time = datetime.fromtimestamp(timestamp)
+            
+            # Apply timezone for comparison
+            try:
+                # Try to import timezone utilities
+                try:
+                    from src.zero_log_parser.utils import apply_timezone_to_datetime
+                    entry_time_tz = apply_timezone_to_datetime(entry_time, None)  # Use system timezone
+                except ImportError:
+                    # Fallback - assume local timezone
+                    entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
+            except:
+                # Last fallback - use naive datetime
+                entry_time_tz = entry_time
+            
+            # Apply filters
+            if start_time and entry_time_tz < start_time:
+                continue
+            if end_time and entry_time_tz > end_time:
+                continue
+                
+            filtered_entries.append((timestamp, entry, line))
+        
+        return filtered_entries
 
     def get_version_and_header(self, log: LogFile):
         logger = logger_for_input(self.log_file.file_path)
@@ -2265,7 +2354,7 @@ class LogData(object):
     def has_official_output_reference(self):
         return self.log_version < REV2 or self.log_version == REV3
 
-    def emit_tabular_decoding(self, output_file: str, out_format='tsv', logger=None):
+    def emit_tabular_decoding(self, output_file: str, out_format='tsv', logger=None, start_time=None, end_time=None):
         file_suffix = '.tsv' if out_format == 'tsv' else '.csv'
         tabular_output_file = output_file.replace('.txt', file_suffix, 1)
         field_sep = '\t' if out_format == 'tsv' else CSV_DELIMITER 
@@ -2315,6 +2404,11 @@ class LogData(object):
                 # Apply timestamp interpolation before sorting
                 collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
                 
+                # Apply time filtering if specified
+                if start_time or end_time:
+                    collected_entries = self._filter_collected_entries(collected_entries, start_time, end_time)
+                    logger.info(f"Filtered to {len(collected_entries)} entries based on time range")
+                
                 # Sort by timestamp (newest first)
                 collected_entries.sort(key=lambda x: x[0], reverse=True)
                 
@@ -2351,7 +2445,7 @@ class LogData(object):
                     
         logger_for_input(self.log_file.file_path).info('Saved to %s', tabular_output_file)
 
-    def emit_json_decoding(self, output_file: str, logger=None):
+    def emit_json_decoding(self, output_file: str, logger=None, start_time=None, end_time=None):
         """Generate JSON output with structured log entries"""
         json_output_file = output_file.replace('.txt', '.json', 1)
         
@@ -2418,6 +2512,11 @@ class LogData(object):
                 
                 # Apply timestamp interpolation before sorting
                 collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
+                
+                # Apply time filtering if specified
+                if start_time or end_time:
+                    collected_entries = self._filter_collected_entries(collected_entries, start_time, end_time)
+                    logger.info(f"Filtered to {len(collected_entries)} entries based on time range")
                 
                 # Sort by timestamp (newest first)
                 collected_entries.sort(key=lambda x: x[0], reverse=True)
@@ -2505,7 +2604,7 @@ class LogData(object):
     def output_time_field(cls, time: str):
         return '     {time:>19s}'.format(time=time)
 
-    def emit_zero_compatible_decoding(self, output_file: str, logger=None):
+    def emit_zero_compatible_decoding(self, output_file: str, logger=None, start_time=None, end_time=None):
         with codecs.open(output_file, 'wb', 'utf-8-sig') as f:
             logger = logger_for_input(self.log_file.file_path)
 
@@ -2574,6 +2673,11 @@ class LogData(object):
                 # Apply timestamp interpolation before sorting
                 collected_entries = Gen2.interpolate_missing_timestamps(collected_entries, logger)
                 
+                # Apply time filtering if specified
+                if start_time or end_time:
+                    collected_entries = self._filter_collected_entries(collected_entries, start_time, end_time)
+                    logger.info(f"Filtered to {len(collected_entries)} entries based on time range")
+                
                 # Sort entries by timestamp (newest first - descending order)
                 collected_entries.sort(key=lambda x: x[0], reverse=True)
                 
@@ -2614,6 +2718,11 @@ class LogData(object):
                 for line, entry_payload in enumerate(self.entries):
                     entry = Gen3.payload_to_entry(entry_payload, logger=logger)
                     collected_gen3_entries.append((entry.time.timestamp(), entry, line))
+                
+                # Apply time filtering if specified
+                if start_time or end_time:
+                    collected_gen3_entries = self._filter_gen3_entries(collected_gen3_entries, start_time, end_time)
+                    logger.info(f"Filtered to {len(collected_gen3_entries)} entries based on time range")
                 
                 # Sort by timestamp (newest first)
                 collected_gen3_entries.sort(key=lambda x: x[0], reverse=True)
@@ -2798,7 +2907,7 @@ class LogData(object):
         return other.__add__(self)
 
 
-def parse_log(bin_file: str, output_file: str, tz_code=None, verbose=False, logger=None, output_format='txt'):
+def parse_log(bin_file: str, output_file: str, tz_code=None, verbose=False, logger=None, output_format='txt', start_time=None, end_time=None):
     """
     Parse a Zero binary log file into a human readable text file
     """
@@ -2813,24 +2922,24 @@ def parse_log(bin_file: str, output_file: str, tz_code=None, verbose=False, logg
 
     if output_format.lower() in ['csv', 'tsv']:
         # Generate CSV/TSV output
-        log_data.emit_tabular_decoding(output_file, out_format=output_format.lower())
+        log_data.emit_tabular_decoding(output_file, out_format=output_format.lower(), start_time=start_time, end_time=end_time)
     elif output_format.lower() == 'json':
         # Generate JSON output
-        log_data.emit_json_decoding(output_file)
+        log_data.emit_json_decoding(output_file, start_time=start_time, end_time=end_time)
     elif output_format.lower() == 'txt':
         # Generate standard text output
         if log_data.has_official_output_reference():
-            log_data.emit_zero_compatible_decoding(output_file)
+            log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
         else:
-            log_data.emit_tabular_decoding(output_file)
-            log_data.emit_zero_compatible_decoding(output_file)
+            log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time)
+            log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
     else:
         # Default to text format for unknown formats
         if log_data.has_official_output_reference():
-            log_data.emit_zero_compatible_decoding(output_file)
+            log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
         else:
-            log_data.emit_tabular_decoding(output_file)
-            log_data.emit_zero_compatible_decoding(output_file)
+            log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time)
+            log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
 
 
 def default_parsed_output_for(bin_file_path: str):
@@ -2883,7 +2992,7 @@ def generate_merged_output_name(bin_files, output_format='txt'):
     return filename
 
 
-def parse_multiple_logs(bin_files, output_file, tz_code=None, verbose=False, logger=None, output_format='txt'):
+def parse_multiple_logs(bin_files, output_file, tz_code=None, verbose=False, logger=None, output_format='txt', start_time=None, end_time=None):
     """
     Parse multiple Zero binary log files and merge them intelligently
     
@@ -2960,24 +3069,24 @@ def parse_multiple_logs(bin_files, output_file, tz_code=None, verbose=False, log
     
     if output_format.lower() in ['csv', 'tsv']:
         # Generate CSV/TSV output
-        merged_log_data.emit_tabular_decoding(output_file, out_format=output_format.lower())
+        merged_log_data.emit_tabular_decoding(output_file, out_format=output_format.lower(), start_time=start_time, end_time=end_time)
     elif output_format.lower() == 'json':
         # Generate JSON output
-        merged_log_data.emit_json_decoding(output_file)
+        merged_log_data.emit_json_decoding(output_file, start_time=start_time, end_time=end_time)
     elif output_format.lower() == 'txt':
         # Generate standard text output
         if merged_log_data.has_official_output_reference():
-            merged_log_data.emit_zero_compatible_decoding(output_file)
+            merged_log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
         else:
-            merged_log_data.emit_tabular_decoding(output_file)
-            merged_log_data.emit_zero_compatible_decoding(output_file)
+            merged_log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time)
+            merged_log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
     else:
         # Default to text format for unknown formats
         if merged_log_data.has_official_output_reference():
-            merged_log_data.emit_zero_compatible_decoding(output_file)
+            merged_log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
         else:
-            merged_log_data.emit_tabular_decoding(output_file)
-            merged_log_data.emit_zero_compatible_decoding(output_file)
+            merged_log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time)
+            merged_log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
     
     logger.info('Multi-file parsing completed: %s', output_file)
 
@@ -2988,10 +3097,13 @@ def main():
         description='Parse Zero Motorcycle binary log files. Supports single or multiple files with smart merging.',
         epilog='For interactive plotting, use: zero-plotting <input_files>')
     parser.add_argument('bin_files', nargs='+', help='Zero *.bin log file(s) to decode. Multiple files will be intelligently merged.')
-    parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET). Defaults to local system timezone.')
+    parser.add_argument('--timezone', help='Timezone offset in hours from UTC (e.g., -8 for PST, +1 for CET) or timezone name (e.g., "Europe/Berlin", "US/Pacific"). Defaults to local system timezone.')
     parser.add_argument('-o', '--output', help='decoded log filename (auto-generated if not specified)')
     parser.add_argument('-f', '--format', choices=['txt', 'csv', 'tsv', 'json'], default='txt', 
                        help='Output format: txt (default), csv, tsv, or json')
+    parser.add_argument('--start', help='Filter entries after this time (e.g., "June 2025", "2025-06-15", "last month")')
+    parser.add_argument('--end', help='Filter entries before this time (e.g., "June 2025", "2025-06-15", "last month")')
+    parser.add_argument('--start-end', help='Filter entries within this period (e.g., "June 2025" sets both start and end boundaries automatically)')
     parser.add_argument('-v', '--verbose', help='additional logging')
     args = parser.parse_args()
     
@@ -3000,16 +3112,61 @@ def main():
     tz_code = args.timezone
     output_format = args.format
     
+    # Parse time filtering parameters
+    start_time = None
+    end_time = None
+    
+    # Handle --start-end shorthand
+    if args.start_end:
+        if args.start or args.end:
+            parser.error("--start-end cannot be used with --start or --end")
+        try:
+            # Try to import time parsing utilities
+            try:
+                from src.zero_log_parser.utils import parse_time_range
+            except ImportError:
+                # Fallback for standalone script usage
+                def parse_time_range(time_str, tz_code):
+                    # Simple fallback implementation
+                    raise ValueError("Time filtering requires package installation")
+            
+            start_time, end_time = parse_time_range(args.start_end, tz_code)
+        except Exception as e:
+            parser.error(f"Invalid --start-end time specification: {e}")
+    else:
+        # Handle individual --start and --end parameters
+        if args.start:
+            try:
+                try:
+                    from src.zero_log_parser.utils import parse_time_filter_start
+                except ImportError:
+                    raise ValueError("Time filtering requires package installation")
+                start_time = parse_time_filter_start(args.start, tz_code)
+            except Exception as e:
+                parser.error(f"Invalid --start time specification: {e}")
+        
+        if args.end:
+            try:
+                try:
+                    from src.zero_log_parser.utils import parse_time_filter_end
+                except ImportError:
+                    raise ValueError("Time filtering requires package installation")
+                end_time = parse_time_filter_end(args.end, tz_code)
+            except Exception as e:
+                parser.error(f"Invalid --end time specification: {e}")
+    
     if len(bin_files) == 1:
         # Single file - use existing behavior
         bin_file = bin_files[0]
         output_file = args.output or default_parsed_output_for(bin_file)
-        parse_log(bin_file, output_file, tz_code=tz_code, verbose=args.verbose, output_format=output_format)
+        parse_log(bin_file, output_file, tz_code=tz_code, verbose=args.verbose, output_format=output_format, 
+                  start_time=start_time, end_time=end_time)
     else:
         # Multiple files - use new multi-file parsing
         output_file = args.output or generate_merged_output_name(bin_files, output_format)
         parse_multiple_logs(bin_files, output_file,
-                            tz_code=tz_code, verbose=args.verbose, output_format=output_format)
+                            tz_code=tz_code, verbose=args.verbose, output_format=output_format,
+                            start_time=start_time, end_time=end_time)
 
 
 if __name__ == '__main__':

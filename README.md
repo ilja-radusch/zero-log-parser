@@ -8,6 +8,7 @@ This tool parses binary-encoded event logs from Zero Motorcycles' main bike boar
 
 - **Multiple Output Formats**: Text, CSV, TSV, and JSON
 - **Interactive Data Visualization**: Generate rich HTML plots for data analysis
+- **Comprehensive Time Filtering**: Filter log entries by date ranges with natural language support (`"last month"`, `"June 2025"`, precise timestamps)
 - **Structured Data Extraction**: Automatically converts telemetry data to structured JSON format
 - **Advanced Timezone Support**: Hour offsets (`-8`, `+1`) and named timezones (`Europe/Berlin`, `America/New_York`) with automatic DST handling
 - **Modern Python Package**: Built for Python 3.10+ with type hints and modern packaging
@@ -84,6 +85,11 @@ zero-log-parser log_data/logfile.bin -o output.txt
 zero-log-parser log_data/logfile.bin -f csv -o output.csv
 zero-log-parser log_data/logfile.bin -f tsv -o output.tsv
 zero-log-parser log_data/logfile.bin -f json -o output.json
+
+# Time filtering support (all formats)
+zero-log-parser log_data/logfile.bin --start "last month" --end "today" -f csv
+zero-log-parser log_data/logfile.bin --start-end "August 2025" -f json
+zero-log-parser log_data/*.bin --start "2025-08-01" --end "2025-08-15" -f csv
 ```
 
 #### Advanced Options
@@ -102,11 +108,20 @@ zero-log-parser log_data/logfile.bin --timezone UTC               # Coordinated 
 # Multiple files with timezone
 zero-log-parser log_data/*.bin --timezone Europe/London -f json
 
+# Time filtering with timezone support
+zero-log-parser log_data/*.bin --start-end "last month" --timezone Europe/Berlin -f json
+zero-log-parser log_data/logfile.bin --start "July 2025" --end "August 2025" --timezone -8 -f csv
+zero-log-parser log_data/*.bin --start "2025-08-01 14:30" --end "2025-08-15 18:00" -f json
+
+# Natural language time filtering
+zero-log-parser log_data/*.bin --start "last week" --end "today" -f csv
+zero-log-parser log_data/logfile.bin --start-end "June 2025" -f json  # Entire month
+
 # Verbose output
 zero-log-parser log_data/logfile.bin --verbose
 
-# Short alias
-zlp log_data/logfile.bin -f json -o structured_data.json
+# Short alias with time filtering
+zlp log_data/logfile.bin --start-end "last month" -f json -o filtered_data.json
 ```
 
 #### Interactive Plotting
@@ -162,7 +177,55 @@ zero-plotting log_data/logfile.bin --plot thermal --start "last week" --timezone
 - Time filtering is applied after merging
 - Fallback naming: `VIN_LOGTYPE_merged_plottype.html` (if date extraction fails)
 
-#### Time Filtering
+#### Log Parsing Time Filtering
+
+**NEW**: The main log parsing commands (`zero-log-parser`, `zlp`) now support comprehensive time filtering across all output formats:
+
+**Time Filtering Parameters:**
+- `--start TIME` - Filter entries after this time (inclusive)
+- `--end TIME` - Filter entries before this time (inclusive)  
+- `--start-end TIME` - Filter entries within this period (shorthand for both boundaries)
+
+**Supported Time Formats:**
+- **Natural Language**: `"last month"`, `"last week"`, `"last 30 days"`, `"today"`
+- **Month/Year**: `"June 2025"`, `"December 2024"` (smart boundaries - start/end of period)
+- **ISO Dates**: `"2025-06-15"`, `"2025-06-15 14:30:00"`
+- **US/European**: `"06/15/2025"`, `"15/06/2025"`
+
+**Smart Boundary Logic:**
+- `--start "June 2025"` → `2025-06-01 00:00:00` (beginning of month)
+- `--end "June 2025"` → `2025-06-30 23:59:59` (end of month)
+- `--start "2025-06-15"` → `2025-06-15 00:00:00` (start of day)
+- `--end "2025-06-15"` → `2025-06-15 23:59:59` (end of day)
+
+**Time Filtering Examples:**
+```bash
+# Filter last month's entries to CSV
+zero-log-parser log_data/*.bin --start-end "last month" -f csv -o last_month.csv
+
+# Filter specific date range with timezone
+zero-log-parser log_data/*.bin --start "July 2025" --end "August 2025" --timezone Europe/Berlin -f json
+
+# Natural language filtering
+zero-log-parser log_data/logfile.bin --start "last week" --end "today" -f csv
+
+# Precise timestamp filtering
+zero-log-parser log_data/*.bin --start "2025-08-01 09:00" --end "2025-08-01 17:00" -f json
+
+# Entire month analysis
+zero-log-parser log_data/logfile.bin --start-end "June 2025" -f csv
+
+# Multiple file filtering with timezone
+zero-log-parser log_data/*.bin --start-end "last 30 days" --timezone US/Pacific -f json
+```
+
+**Benefits:**
+- Works with all output formats (TXT, CSV, TSV, JSON)
+- Timezone-aware filtering using `--timezone` parameter
+- Memory efficient - filters entries before processing
+- Consistent with plotting time filtering syntax
+
+#### Plotting Time Filtering
 
 The `zero-plotting` command supports flexible time filtering using `--start` and `--end` parameters:
 
@@ -237,6 +300,7 @@ zero-plotting --help
 
 ```python
 from zero_log_parser import LogData, parse_log
+from datetime import datetime
 
 # Parse a log file
 log_data = LogData("log_data/logfile.bin")
@@ -251,18 +315,25 @@ json_output = log_data.emit_json_decoding()
 
 # Or use the high-level function with timezone support
 parse_log(
-    log_file="log_data/input.bin",
+    bin_file="log_data/input.bin",
     output_file="output.json", 
     output_format="json",
     tz_code=-8  # PST as hour offset
 )
 
-# Or with named timezone
+# With named timezone and time filtering
+from zero_log_parser.utils import parse_time_filter_start, parse_time_filter_end
+
+start_time = parse_time_filter_start("last month", "Europe/Berlin")
+end_time = parse_time_filter_end("today", "Europe/Berlin")
+
 parse_log(
-    log_file="log_data/input.bin",
-    output_file="output.json",
+    bin_file="log_data/input.bin",
+    output_file="filtered_output.json",
     output_format="json", 
-    tz_code="Europe/Berlin"  # Named timezone
+    tz_code="Europe/Berlin",  # Named timezone
+    start_time=start_time,
+    end_time=end_time
 )
 ```
 
@@ -405,11 +476,16 @@ The repository includes sample Zero Motorcycle log files in the `log_data/` dire
 # Parse sample logs
 zero-log-parser log_data/*.bin -f json
 
+# Parse with time filtering
+zero-log-parser log_data/*.bin --start-end "August 2025" -f csv -o august_2025_logs.csv
+zero-log-parser log_data/*.bin --start "2025-08-01" --end "2025-08-05" -f json
+
 # Generate plots from samples  
 zero-plotting log_data/*.bin --plot battery --output-dir ./plots
 
-# Time-filtered analysis of samples
+# Time-filtered plotting analysis of samples
 zero-plotting log_data/*.bin --plot thermal --start "2025-08-01" --timezone UTC
+zero-plotting log_data/*.bin --plot battery --start-end "August 2025" --output-dir ./plots
 ```
 
 ## Development
