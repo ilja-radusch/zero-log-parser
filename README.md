@@ -328,6 +328,12 @@ The parser automatically detects and converts various message types to structure
 - **Tipover Detection**: Sensor data with roll/pitch measurements
 - **Error Conditions**: Structured fault and diagnostic information
 
+**📖 Complete JSON Structure Documentation**: See [JSON_STRUCTURE.md](JSON_STRUCTURE.md) for comprehensive documentation of all structured data formats, including:
+- 20 unique structured event types (9 MBB, 11 BMS)
+- Real examples from actual motorcycle logs
+- Field definitions and data types
+- Python code examples for analysis
+
 ## Data Visualization
 
 The plotting feature provides comprehensive analysis capabilities:
@@ -425,7 +431,9 @@ The parser supports multiple Zero motorcycle log formats:
 - **Legacy Format**: Static addresses for older firmware
 - **Ring Buffer Format**: Dynamic format for 2024+ firmware
 
-For detailed format documentation, see [LOG STRUCTURE](LOG_STRUCTURE.md).
+**Documentation:**
+- **[LOG_STRUCTURE.md](LOG_STRUCTURE.md)**: Binary log file formats and entry types
+- **[JSON_STRUCTURE.md](JSON_STRUCTURE.md)**: JSON output structure with structured data examples
 
 ## Contributing
 
