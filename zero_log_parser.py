@@ -17,17 +17,18 @@ structured data extraction. Gen2 parsers have been optimized to generate
 structured data directly from binary data, eliminating the "string formatting
 → regex re-parsing" overhead that existed previously.
 
-Gen2 Parser Optimization - Completed (15 methods):
+Gen2 Parser Optimization - Completed (19 methods):
 - Phase 1: disarmed_status(), bms_contactor_state(), bms_soc_adj_voltage()
 - Phase 2: battery_status(), bms_discharge_cut(), bms_contactor_drive()
 - Phase 3: bms_curr_sens_zero(), sevcon_status(), bms_isolation_fault(), power_state()
 - Phase 4: charger_status(), bms_reflash(), key_state()
+- Phase 5: battery_discharge_current_limited(), low_chassis_isolation(), sevcon_power_state(), battery_contactor_closed()
 - Additional: vehicle_state_telemetry(), sensor_data()
 
 All optimized parsers use direct binary extraction via BinaryTools.unpack() and
 generate structured JSON data with human-readable conditions for all output formats.
 This eliminates the previous "string formatting → regex re-parsing" overhead while
-maintaining full backward compatibility.
+maintaining full backward compatibility. Redundant patterns removed from improve_message_parsing.
 
 """
 
@@ -112,7 +113,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
         improved_event = improved_event[9:]
 
     # Parse structured data patterns and convert to JSON
-    # NOTE: Most patterns have been moved to optimized Gen2 parsers (15 methods total):
+    # NOTE: Most patterns have been moved to optimized Gen2 parsers (19 methods total):
     # - Discharge level: handled by bms_discharge_level()
     # - SOC messages: handled by debug_message()
     # - Riding status: handled by run_status()
@@ -121,10 +122,12 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
     # - Phase 2: battery_status(), bms_discharge_cut(), bms_contactor_drive()
     # - Phase 3: bms_curr_sens_zero(), sevcon_status(), bms_isolation_fault(), power_state()
     # - Phase 4: charger_status(), bms_reflash(), key_state()
+    # - Phase 5: battery_discharge_current_limited(), low_chassis_isolation(), sevcon_power_state(), battery_contactor_closed()
     # - Additional: vehicle_state_telemetry(), sensor_data()
     #
     # All optimized parsers generate structured JSON data directly from binary parsing,
     # eliminating the previous "string formatting → regex re-parsing" overhead.
+    # Redundant patterns (Module Registered, Current Sensor Zeroed) have been removed.
     try:
         # All major patterns have been moved to direct Gen2 parser optimization.
         # Only handle remaining edge cases and hex patterns here.
@@ -188,32 +191,9 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
             improved_event = f"Unknown - Single character: {improved_event}"
             improved_conditions = "Possibly corrupted entry"
 
-        # Handle Current Sensor Zeroed messages
-        elif improved_event == 'Current Sensor Zeroed' and improved_conditions:
-            sensor_match = re.match(
-                r'old: (\d+)mV, new: (\d+)mV, corrfact: (\d+)',
-                improved_conditions
-            )
-            if sensor_match:
-                json_data = {
-                    'old_voltage_mv': int(sensor_match.group(1)),
-                    'new_voltage_mv': int(sensor_match.group(2)),
-                    'correction_factor': int(sensor_match.group(3))
-                }
-                improved_conditions = json.dumps(json_data)
+        # Current Sensor Zeroed pattern removed - now handled directly by bms_curr_sens_zero() Gen2 method
 
-        # Handle Module Registered messages
-        elif 'Registered' in improved_event and improved_conditions:
-            module_match = re.match(
-                r'serial: ([^,]+),\s*vmod: ([0-9.]+)V',
-                improved_conditions
-            )
-            if module_match:
-                json_data = {
-                    'serial_number': module_match.group(1).strip(),
-                    'module_voltage_volts': float(module_match.group(2))
-                }
-                improved_conditions = json.dumps(json_data)
+        # Module Registered pattern removed - now handled directly by battery_status() Gen2 method
 
         # Handle Charger messages (Charging/Stopped) - these are in the event field
         elif 'Charger' in improved_event and 'SN:' in improved_event:
@@ -1734,8 +1714,22 @@ class Gen2:
 
     @classmethod
     def sevcon_power_state(cls, x):
+        # Extract binary data once
+        power_on = BinaryTools.unpack('bool', x, 0x0)
+        power_state_text = convert_bit_to_on_off(power_on)
+
+        # Build structured data
+        structured_data = {
+            'sevcon_power_on': power_on,
+            'power_state': power_state_text,
+            'is_powered': power_on,
+            'controller_type': 'sevcon'
+        }
+
         return {
-            'event': 'Sevcon Turned ' + convert_bit_to_on_off(BinaryTools.unpack('bool', x, 0x0))
+            'event': 'Sevcon Turned ' + power_state_text,
+            'structured_data': structured_data,
+            'conditions': None  # No legacy conditions needed for this simple event
         }
 
     @classmethod
@@ -1746,29 +1740,65 @@ class Gen2:
 
     @classmethod
     def battery_discharge_current_limited(cls, x):
+        # Extract binary data once
         limit = BinaryTools.unpack('uint16', x, 0x00)
+        min_cell_mv = BinaryTools.unpack('uint16', x, 0x02)
+        temp = BinaryTools.unpack('uint8', x, 0x04)
         max_amp = BinaryTools.unpack('uint16', x, 0x05)
+
+        # Build structured data
+        structured_data = {
+            'limit_current_amps': limit,
+            'max_current_amps': max_amp,
+            'limit_percentage': convert_ratio_to_percent(limit, max_amp),
+            'min_cell_voltage_mv': min_cell_mv,
+            'min_cell_voltage_volts': round(min_cell_mv / 1000.0, 3),
+            'max_pack_temp_celsius': temp,
+            'is_current_limited': True,
+            'current_reduction_amps': max_amp - limit
+        }
+
+        # Generate legacy conditions string for backward compatibility
+        legacy_conditions = '{limit} A ({percent:.2f}%), MinCell: {min_cell}mV, MaxPackTemp: {temp}C'.format(
+            limit=limit,
+            min_cell=min_cell_mv,
+            temp=temp,
+            max_amp=max_amp,
+            percent=convert_ratio_to_percent(limit, max_amp)
+        )
 
         return {
             'event': 'Batt Dischg Cur Limited',
-            'conditions':
-                '{limit} A ({percent:.2f}%), MinCell: {min_cell}mV, MaxPackTemp: {temp}C'.format(
-                    limit=limit,
-                    min_cell=BinaryTools.unpack('uint16', x, 0x02),
-                    temp=BinaryTools.unpack('uint8', x, 0x04),
-                    max_amp=max_amp,
-                    percent=convert_ratio_to_percent(limit, max_amp)
-                )
+            'structured_data': structured_data,
+            'conditions': legacy_conditions
         }
 
     @classmethod
     def low_chassis_isolation(cls, x):
+        # Extract binary data once
+        resistance_kohms = BinaryTools.unpack('uint32', x, 0x00)
+        cell_number = BinaryTools.unpack('uint8', x, 0x04)
+
+        # Build structured data
+        structured_data = {
+            'resistance_kohms': resistance_kohms,
+            'resistance_ohms': resistance_kohms * 1000,
+            'resistance_mohms': resistance_kohms * 1000000,
+            'affected_cell_number': cell_number,
+            'isolation_fault': True,
+            'is_critical': resistance_kohms < 500  # Typical critical threshold
+        }
+
+        # Generate legacy conditions string for backward compatibility
+        legacy_conditions = '{kohms} KOhms to cell {cell}'.format(
+            kohms=resistance_kohms,
+            cell=cell_number
+        )
+
         return {
             'event': 'Low Chassis Isolation',
-            'conditions': '{kohms} KOhms to cell {cell}'.format(
-                kohms=BinaryTools.unpack('uint32', x, 0x00),
-                cell=BinaryTools.unpack('uint8', x, 0x04)
-            )
+            'structured_data': structured_data,
+            'conditions': legacy_conditions
         }
 
     @classmethod
@@ -1842,9 +1872,22 @@ class Gen2:
 
     @classmethod
     def battery_contactor_closed(cls, x):
+        # Extract binary data once
+        module_number = BinaryTools.unpack('uint8', x, 0x0)
+
+        # Build structured data
+        structured_data = {
+            'module_number': module_number,
+            'contactor_state': 'closed',
+            'contactor_closed': True,
+            'event_type': 'contactor_closure',
+            'module_id': f'module_{module_number:02d}'
+        }
+
         return {
-            'event': 'Battery module {module:02} contactor closed'.format(
-                module=BinaryTools.unpack('uint8', x, 0x0))
+            'event': 'Battery module {module:02} contactor closed'.format(module=module_number),
+            'structured_data': structured_data,
+            'conditions': None  # No legacy conditions needed for this simple event
         }
 
     @classmethod
