@@ -2025,12 +2025,12 @@ class Gen2:
             # Apply improved message parsing for unoptimized entries
             improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(
                 entry.get('event', ''), entry.get('conditions', ''), verbosity_level=verbosity_level, logger=logger)
-            entry['event'] = improved_event  # Store the improved event  
+            entry['event'] = improved_event  # Store the improved event
             entry['conditions'] = improved_conditions  # Store the improved conditions
-        
+
         entry['log_level'] = determine_log_level(improved_event, has_json_data)
         # Always store the numeric message type ID
-        entry['message_type'] = str(message_type)
+        entry['message_type'] = f"0x{message_type:X}"
 
         return length, entry, unhandled
 
@@ -2648,12 +2648,16 @@ class LogData(object):
     def has_official_output_reference(self):
         return self.log_version < REV2 or self.log_version == REV3
 
-    def emit_tabular_decoding(self, output_file: str, out_format='tsv', logger=None, start_time=None, end_time=None):
+    def emit_tabular_decoding(self, output_file: str, out_format='tsv', logger=None, start_time=None, end_time=None, unnest=False):
         file_suffix = '.tsv' if out_format == 'tsv' else '.csv'
         tabular_output_file = output_file.replace('.txt', file_suffix, 1)
         field_sep = '\t' if out_format == 'tsv' else CSV_DELIMITER
         record_sep = os.linesep
-        headers = ['entry', 'timestamp', 'log_level', 'message', 'conditions', 'uninterpreted']
+        # Modify headers based on unnest option
+        if unnest:
+            headers = ['entry', 'timestamp', 'log_level', 'message', 'condition_key', 'condition_value', 'uninterpreted']
+        else:
+            headers = ['entry', 'timestamp', 'log_level', 'message', 'conditions', 'uninterpreted']
 
         if not logger:
             logger = logger_for_input(self.log_file.file_path)
@@ -2669,20 +2673,47 @@ class LogData(object):
 
             # Write processed entries
             for entry in processed_entries:
-                # Use JSON-encoded structured data in conditions field if available
-                conditions_output = entry.conditions
-                if entry.structured_data:
-                    conditions_output = json.dumps(entry.structured_data, separators=(',', ':'))
+                if unnest and entry.structured_data:
+                    # Unnest structured data into multiple rows
+                    for key, value in entry.structured_data.items():
+                        row_values = [
+                            str(entry.entry_number),
+                            entry.timestamp,
+                            entry.log_level,
+                            entry.event,
+                            key,
+                            str(value),
+                            entry.uninterpreted
+                        ]
+                        write_row([print_value_tabular(x) for x in row_values])
+                else:
+                    # Standard single-row format
+                    if unnest:
+                        # For unnest format but no structured data, use empty key/value
+                        row_values = [
+                            str(entry.entry_number),
+                            entry.timestamp,
+                            entry.log_level,
+                            entry.event,
+                            '',  # condition_key
+                            entry.conditions,  # condition_value (original conditions text)
+                            entry.uninterpreted
+                        ]
+                    else:
+                        # Use JSON-encoded structured data in conditions field if available
+                        conditions_output = entry.conditions
+                        if entry.structured_data:
+                            conditions_output = json.dumps(entry.structured_data, separators=(',', ':'))
 
-                row_values = [
-                    str(entry.entry_number),
-                    entry.timestamp,
-                    entry.log_level,
-                    entry.event,
-                    conditions_output,
-                    entry.uninterpreted
-                ]
-                write_row([print_value_tabular(x) for x in row_values])
+                        row_values = [
+                            str(entry.entry_number),
+                            entry.timestamp,
+                            entry.log_level,
+                            entry.event,
+                            conditions_output,
+                            entry.uninterpreted
+                        ]
+                    write_row([print_value_tabular(x) for x in row_values])
 
         logger_for_input(self.log_file.file_path).info('Saved to %s', tabular_output_file)
 
@@ -3017,7 +3048,7 @@ class LogData(object):
         return other.__add__(self)
 
 
-def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None):
+def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None, unnest=False):
     """
     Parse a Zero binary log file into a human readable text file
     """
@@ -3036,7 +3067,7 @@ def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, 
 
     if output_format.lower() in ['csv', 'tsv']:
         # Generate CSV/TSV output
-        log_data.emit_tabular_decoding(output_file, out_format=output_format.lower(), start_time=start_time, end_time=end_time)
+        log_data.emit_tabular_decoding(output_file, out_format=output_format.lower(), start_time=start_time, end_time=end_time, unnest=unnest)
     elif output_format.lower() == 'json':
         # Generate JSON output
         log_data.emit_json_decoding(output_file, start_time=start_time, end_time=end_time)
@@ -3045,14 +3076,14 @@ def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, 
         if log_data.has_official_output_reference():
             log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
         else:
-            log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time)
+            log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time, unnest=unnest)
             log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
     else:
         # Default to text format for unknown formats
         if log_data.has_official_output_reference():
             log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
         else:
-            log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time)
+            log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time, unnest=unnest)
             log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
 
 
@@ -3119,7 +3150,7 @@ def generate_merged_output_name(bin_files, output_format='txt'):
     return filename
 
 
-def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None):
+def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None, unnest=False):
     """
     Parse multiple Zero binary log files and merge them intelligently
 
@@ -3200,7 +3231,7 @@ def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1,
 
     if output_format.lower() in ['csv', 'tsv']:
         # Generate CSV/TSV output
-        merged_log_data.emit_tabular_decoding(output_file, out_format=output_format.lower(), start_time=start_time, end_time=end_time)
+        merged_log_data.emit_tabular_decoding(output_file, out_format=output_format.lower(), start_time=start_time, end_time=end_time, unnest=unnest)
     elif output_format.lower() == 'json':
         # Generate JSON output
         merged_log_data.emit_json_decoding(output_file, start_time=start_time, end_time=end_time)
@@ -3209,14 +3240,14 @@ def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1,
         if merged_log_data.has_official_output_reference():
             merged_log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
         else:
-            merged_log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time)
+            merged_log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time, unnest=unnest)
             merged_log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
     else:
         # Default to text format for unknown formats
         if merged_log_data.has_official_output_reference():
             merged_log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
         else:
-            merged_log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time)
+            merged_log_data.emit_tabular_decoding(output_file, start_time=start_time, end_time=end_time, unnest=unnest)
             merged_log_data.emit_zero_compatible_decoding(output_file, start_time=start_time, end_time=end_time)
 
     logger.info('Multi-file parsing completed: %s', output_file)
@@ -3232,6 +3263,8 @@ def main():
     parser.add_argument('-o', '--output', help='decoded log filename (auto-generated if not specified)')
     parser.add_argument('-f', '--format', choices=['txt', 'csv', 'tsv', 'json'], default='txt',
                        help='Output format: txt (default), csv, tsv, or json')
+    parser.add_argument('--unnest', action='store_true',
+                       help='For CSV/TSV formats: expand structured data into separate rows with condition_key and condition_value columns')
     parser.add_argument('--start', help='Filter entries after this time (e.g., "June 2025", "2025-06-15", "last month")')
     parser.add_argument('--end', help='Filter entries before this time (e.g., "June 2025", "2025-06-15", "last month")')
     parser.add_argument('--start-end', help='Filter entries within this period (e.g., "June 2025" sets both start and end boundaries automatically)')
@@ -3298,13 +3331,13 @@ def main():
         bin_file = bin_files[0]
         output_file = args.output or default_parsed_output_for(bin_file)
         parse_log(bin_file, output_file, tz_code=tz_code, verbosity_level=verbosity_level, output_format=output_format,
-                  start_time=start_time, end_time=end_time)
+                  start_time=start_time, end_time=end_time, unnest=args.unnest)
     else:
         # Multiple files - use new multi-file parsing
         output_file = args.output or generate_merged_output_name(bin_files, output_format)
         parse_multiple_logs(bin_files, output_file,
                             tz_code=tz_code, verbosity_level=verbosity_level, output_format=output_format,
-                            start_time=start_time, end_time=end_time)
+                            start_time=start_time, end_time=end_time, unnest=args.unnest)
 
 
 if __name__ == '__main__':

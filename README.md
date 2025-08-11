@@ -6,7 +6,7 @@ This tool parses binary-encoded event logs from Zero Motorcycles' main bike boar
 
 ## Features
 
-- **Multiple Output Formats**: Text, CSV, TSV, and JSON
+- **Multiple Output Formats**: Text, CSV, TSV, and JSON with structured data unnesting support
 - **Interactive Data Visualization**: Generate rich HTML plots for data analysis
 - **Comprehensive Time Filtering**: Filter log entries by date ranges with natural language support (`"last month"`, `"June 2025"`, precise timestamps)
 - **Structured Data Extraction**: Automatically converts telemetry data to structured JSON format
@@ -85,6 +85,9 @@ zero-log-parser log_data/logfile.bin -o output.txt
 zero-log-parser log_data/logfile.bin -f csv -o output.csv
 zero-log-parser log_data/logfile.bin -f tsv -o output.tsv
 zero-log-parser log_data/logfile.bin -f json -o output.json
+
+# Structured data unnesting for CSV/TSV analysis
+zero-log-parser log_data/logfile.bin -f csv --unnest -o detailed_analysis.csv
 
 # Time filtering support (all formats)
 zero-log-parser log_data/logfile.bin --start "last month" --end "today" -f csv
@@ -366,6 +369,37 @@ entry	timestamp	log_level	message	conditions	uninterpreted
 6	2025-08-03 12:42:34	DATA	Discharge level	{"amp_hours":7,"state_of_charge_percent":94,"current_amps":1}	
 6499	2025-08-03 12:34:38	INFO	Contactor drive turned on	Pack V:  113.5V, Switched V:  100.1V, Duty Cycle: 35%	
 ```
+
+#### Structured Data Unnesting (`--unnest`)
+
+For CSV/TSV formats, use `--unnest` to expand structured telemetry data into separate rows for enhanced analysis:
+
+**Standard CSV/TSV Output:**
+```csv
+entry;timestamp;log_level;message;conditions;uninterpreted
+6;2025-08-03 12:42:33;DATA;Discharge level;{"amp_hours":7,"state_of_charge_percent":94};
+```
+
+**With `--unnest` Flag:**
+```csv
+entry;timestamp;log_level;message;condition_key;condition_value;uninterpreted
+6;2025-08-03 12:42:33;DATA;Discharge level;amp_hours;7;
+6;2025-08-03 12:42:33;DATA;Discharge level;state_of_charge_percent;94;
+```
+
+Usage:
+```bash
+# CSV with unnesting for spreadsheet analysis
+zero-log-parser logfile.bin -f csv --unnest -o analysis.csv
+
+# TSV with unnesting for data science workflows  
+zero-log-parser logfile.bin -f tsv --unnest -o dataset.tsv
+```
+
+Benefits:
+- **Spreadsheet-friendly**: Each telemetry value gets its own row for easy filtering and pivot tables
+- **Data analysis ready**: Perfect for Python pandas, R, or SQL import
+- **Preserve relationships**: Entry metadata (timestamp, message) repeated for each key-value pair
 
 #### JSON Format
 Structured JSON with metadata and parsed telemetry:

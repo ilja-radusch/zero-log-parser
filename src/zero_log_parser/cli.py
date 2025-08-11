@@ -38,6 +38,12 @@ def create_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument(
+        '--unnest',
+        action='store_true',
+        help="For CSV/TSV formats: expand structured data into separate rows with condition_key and condition_value columns"
+    )
+    
+    parser.add_argument(
         '-t', '--timezone',
         help="Timezone offset in hours from UTC (e.g., -8, +1) or timezone name (e.g., Europe/Berlin, America/New_York). Default: system timezone"
     )
@@ -207,7 +213,8 @@ def main() -> int:
                 logger=logger,
                 output_format=args.format,
                 start_time=start_time,
-                end_time=end_time
+                end_time=end_time,
+                unnest=args.unnest
             )
         else:
             # Multiple file parsing with merging
@@ -221,7 +228,8 @@ def main() -> int:
                 logger=logger,
                 output_format=args.format,
                 start_time=start_time,
-                end_time=end_time
+                end_time=end_time,
+                unnest=args.unnest
             )
         
         logger.info("Parsing completed successfully")
