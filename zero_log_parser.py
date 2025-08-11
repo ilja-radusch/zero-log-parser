@@ -257,14 +257,10 @@ def improve_message_parsing(event_text: str, conditions_text: str = None, verbos
     return improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type
 
 
-def determine_log_level(message: str, is_json_data: bool = False) -> str:
+def determine_log_level(message: str) -> str:
     """Determine log level based on message content patterns"""
     if not message:
         return 'UNKNOWN'
-
-    # JSON data entries get special DATA log level
-#    if is_json_data:
-#        return 'DATA'
 
     message_upper = message.upper()
 
@@ -744,7 +740,7 @@ class Gen2:
                         entry['has_valid_timestamp'] = True
 
                         if logger:
-                            logger.info('Interpolated timestamp for entry %d: %s (was: %s)',
+                            logger.debug('Interpolated timestamp for entry %d: %s (was: %s)',
                                        entry['entry_num'] + 1, interpolated_time_str, entry['original_time_str'])
                     except:
                         # If interpolation fails, keep original
@@ -1113,8 +1109,11 @@ class Gen2:
         # Extract the debug message string
         message = BinaryTools.unpack_str(x, 0x0, count=len(x) - 1)
 
+        log_level = None
+
         # Check if this is a SOC data message and optimize it directly
         if message.startswith('SOC:'):
+            log_level = 'STATE'
             soc_data = message[4:]  # Remove 'SOC:' prefix
             if ',' in soc_data:
                 values = [v.strip() for v in soc_data.split(',')]
@@ -1157,6 +1156,7 @@ class Gen2:
 
                     return {
                         'event': 'SOC Data',
+                        'log_level': log_level,
                         'structured_data': structured_data,  # NEW: Direct structured data
                         'conditions': legacy_conditions  # LEGACY: For backward compatibility
                     }
@@ -1183,13 +1183,76 @@ class Gen2:
 
                     return {
                         'event': 'SOC Data',
+                        'log_level': log_level,
                         'structured_data': structured_data,  # NEW: Direct structured data
                         'conditions': message  # LEGACY: For backward compatibility
                     }
 
-        # For non-SOC debug messages, return as normal
+        if message.startswith('DEBUG:'):
+            message = message[7:].strip()
+            log_level = 'DEBUG'
+        elif message.startswith('INFO:'):
+            message = message[6:].strip()
+            log_level = 'INFO'
+        elif message.startswith('ERROR:'):
+            message = message[7:].strip()
+            log_level = 'ERROR'
+        elif message.startswith('WARNING:'):
+            message = message[9:].strip()
+            log_level = 'WARNING'
+
+        # Check if this is a charger debug message and optimize it directly
+        if message.startswith('Charger ') and 'SN:' in message and 'SW:' in message:
+            import re
+
+            # Pattern to match various charger message formats:
+            # "Charger 6 Stopped SN:2329104 SW:209 236Vac  50Hz EVSE  8A"
+            # "Charger 6 Charging SN:2329104 SW:209 237Vac 50Hz EVSE 16A"
+            # "Charger 6 Charging SN:2329104 SW:209 237Vac  50Hz EVSE 16A" (extra spaces)
+            charger_pattern = r'Charger\s+(\d+)\s+(\w+)\s+SN:(\d+)\s+SW:(\d+)\s+(\d+)Vac\s+(\d+)Hz\s+EVSE\s+(\d+)A'
+            match = re.search(charger_pattern, message)
+
+            if match:
+                charger_num, status, serial_num, sw_version, voltage_ac, frequency, evse_current = match.groups()
+
+                # Build structured data dictionary
+                structured_data = {
+                    'charger_number': int(charger_num),
+                    'status': status,
+                    'serial_number': serial_num,
+                    'software_version': int(sw_version),
+                    'voltage_ac': int(voltage_ac),
+                    'frequency_hz': int(frequency),
+                    'evse_current_amps': int(evse_current)
+                }
+
+                return {
+                    'event': 'Charger Status',
+                    'log_level': log_level,
+                    'structured_data': structured_data,  # NEW: Direct structured data
+                    'conditions': message  # LEGACY: For backward compatibility
+                }
+            else:
+                # If pattern doesn't match exactly, still try to extract some basic charger info
+                basic_charger_pattern = r'Charger (\d+) (\w+)'
+                basic_match = re.search(basic_charger_pattern, message)
+                if basic_match:
+                    charger_num, status = basic_match.groups()
+                    return {
+                        'event': 'Charger Status',
+                        'log_level': log_level,
+                        'structured_data': {
+                            'charger_number': int(charger_num),
+                            'status': status,
+                            'raw_message': message  # Include full message for unknown formats
+                        },
+                        'conditions': message
+                    }
+
+        # For other debug messages, return as normal
         return {
-            'event': message
+            'event': message,
+            'log_level': log_level
         }
 
     @classmethod
@@ -2070,19 +2133,16 @@ class Gen2:
 
         # Check if Gen2 parser already provided structured data (optimized path)
         has_structured_data = 'structured_data' in entry
-        if has_structured_data:
-            # Gen2 parser already optimized - skip improve_message_parsing
-            improved_event = entry.get('event', '')
-            improved_conditions = entry.get('conditions', '')
-            has_json_data = True
-        else:
+        if not has_structured_data:
             # Apply improved message parsing for unoptimized entries
             improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(
                 entry.get('event', ''), entry.get('conditions', ''), verbosity_level=verbosity_level, logger=logger)
             entry['event'] = improved_event  # Store the improved event
             entry['conditions'] = improved_conditions  # Store the improved conditions
 
-        entry['log_level'] = determine_log_level(improved_event, has_json_data)
+        if not entry.get('log_level'):
+            entry['log_level'] = determine_log_level(entry.get('event', ''))
+
         # Always store the numeric message type ID
         entry['message_type'] = f"0x{message_type:X}"
 
@@ -2212,7 +2272,7 @@ class Gen3:
             conditions_str = event_conditions
         # Apply improved message parsing and determine log level
         improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(event_message, conditions_str, verbosity_level=verbosity_level, logger=logger)
-        log_level = determine_log_level(improved_event, has_json_data)
+        log_level = determine_log_level(improved_event)
         # Gen3 entries don't have numeric message types, so use "gen3" as identifier
         message_type = "gen3"
 
