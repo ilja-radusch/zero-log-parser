@@ -99,32 +99,17 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
     # - SOC messages: handled by debug_message() 
     # - Riding status: handled by run_status()
     # - Charging status: handled by charging_status()
+    # - Disarmed status: handled by disarmed_status() (Phase 1 optimization)
+    # - BMS contactor state: handled by bms_contactor_state() (Phase 1 optimization)
+    # - SOC voltage adjustments: handled by bms_soc_adj_voltage() (Phase 1 optimization)
+    # - Battery status: handled by battery_status() (Phase 2 optimization)
+    # - BMS discharge cutback: handled by bms_discharge_cut() (Phase 2 optimization)
+    # - BMS contactor drive: handled by bms_contactor_drive() (Phase 2 optimization)
     try:
-        # Handle Disarmed status messages
-        if improved_event == 'Disarmed' and improved_conditions:
-            disarmed_match = re.match(
-                r'PackTemp: h (\d+)C, l (\d+)C, PackSOC:\s*(\d+)%, Vpack:\s*([0-9.]+)V, MotAmps:\s*(-?\d+), BattAmps:\s*(-?\d+), Mods:\s*(\d+), MotTemp:\s*(-?\d+)C, CtrlTemp:\s*(-?\d+)C, AmbTemp:\s*(-?\d+)C, MotRPM:\s*(-?\d+), Odo:\s*(\d+)km',
-                improved_conditions
-            )
-            if disarmed_match:
-                json_data = {
-                    'pack_temp_high_celsius': int(disarmed_match.group(1)),
-                    'pack_temp_low_celsius': int(disarmed_match.group(2)),
-                    'state_of_charge_percent': int(disarmed_match.group(3)),
-                    'pack_voltage_volts': float(disarmed_match.group(4)),
-                    'motor_current_amps': int(disarmed_match.group(5)),
-                    'battery_current_amps': int(disarmed_match.group(6)),
-                    'modules_status': int(disarmed_match.group(7)),
-                    'motor_temp_celsius': int(disarmed_match.group(8)),
-                    'controller_temp_celsius': int(disarmed_match.group(9)),
-                    'ambient_temp_celsius': int(disarmed_match.group(10)),
-                    'motor_rpm': int(disarmed_match.group(11)),
-                    'odometer_km': int(disarmed_match.group(12))
-                }
-                improved_conditions = json.dumps(json_data)
+        # Handle Disarmed status messages - REMOVED: Now handled by disarmed_status()
 
-        # Handle Contactor messages
-        elif 'Contactor' in improved_event and improved_conditions:
+        # Handle Contactor messages - REMOVED: Now handled by bms_contactor_state()
+        if False:  # Placeholder to maintain proper if-elif structure
             if 'Closing Contactor' in improved_event:
                 contactor_match = re.match(
                     r'vmod: ([0-9.]+)V, maxsys: ([0-9.]+)V, minsys: ([0-9.]+)V, diff: ([0-9.]+)V, vcap: ([0-9.]+)V, prechg: (\d+)%',
@@ -207,7 +192,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         improved_conditions = json.dumps(json_data)
 
         # Handle abbreviated hex patterns from new format (2025+)
-        elif re.match(r'^0x[0-9a-f]+(\s+0x[0-9a-f]+)*$', improved_event or '', re.IGNORECASE):
+        if re.match(r'^0x[0-9a-f]+(\s+0x[0-9a-f]+)*$', improved_event or '', re.IGNORECASE):
             # Parse hex pattern like "0x28 0x02" or "0x01"
             hex_parts = improved_event.split()
             if len(hex_parts) >= 1:
@@ -1116,17 +1101,36 @@ class Gen2:
 
     @classmethod
     def bms_soc_adj_voltage(cls, x):
+        # Extract binary data once
+        old_uah = BinaryTools.unpack('uint32', x, 0x00)
+        old_soc = BinaryTools.unpack('uint8', x, 0x04)
+        new_uah = BinaryTools.unpack('uint32', x, 0x05)
+        new_soc = BinaryTools.unpack('uint8', x, 0x09)
+        low_cell_mv = BinaryTools.unpack('uint16', x, 0x0a)
+        
+        # Build structured data
+        structured_data = {
+            'old_capacity_microamp_hours': old_uah,
+            'old_state_of_charge_percent': old_soc,
+            'new_capacity_microamp_hours': new_uah,
+            'new_state_of_charge_percent': new_soc,
+            'low_cell_voltage_millivolts': low_cell_mv,
+            'capacity_change_microamp_hours': new_uah - old_uah,
+            'soc_change_percent': new_soc - old_soc
+        }
+        
+        # Generate legacy conditions string for backward compatibility
+        legacy_conditions = ('old:   {old}uAH (soc:{old_soc}%), '
+                           'new:   {new}uAH (soc:{new_soc}%), '
+                           'low cell: {low} mV').format(
+                              old=old_uah, old_soc=old_soc,
+                              new=new_uah, new_soc=new_soc,
+                              low=low_cell_mv)
+        
         return {
             'event': 'SOC adjusted for voltage',
-            'conditions':
-                ('old:   {old}uAH (soc:{old_soc}%), '
-                 'new:   {new}uAH (soc:{new_soc}%), '
-                 'low cell: {low} mV').format(
-                    old=BinaryTools.unpack('uint32', x, 0x00),
-                    old_soc=BinaryTools.unpack('uint8', x, 0x04),
-                    new=BinaryTools.unpack('uint32', x, 0x05),
-                    new_soc=BinaryTools.unpack('uint8', x, 0x09),
-                    low=BinaryTools.unpack('uint16', x, 0x0a))
+            'structured_data': structured_data,
+            'conditions': legacy_conditions
         }
 
     @classmethod
@@ -1172,47 +1176,101 @@ class Gen2:
 
     @classmethod
     def bms_contactor_state(cls, x):
+        # Extract raw binary data once into structured format
+        is_closed = BinaryTools.unpack('bool', x, 0x0)
         pack_voltage = BinaryTools.unpack('uint32', x, 0x01)
         switched_voltage = BinaryTools.unpack('uint32', x, 0x05)
-        # Convert to volts for display
+        discharge_current = BinaryTools.unpack('int32', x, 0x09)
+        
+        # Convert to display units
         pack_voltage_v = pack_voltage / 1000.0
         switched_voltage_v = switched_voltage / 1000.0
+        discharge_current_a = discharge_current / 1000.0
+        precharge_percent = convert_ratio_to_percent(switched_voltage, pack_voltage)
+        
+        # Build structured data dictionary
+        structured_data = {
+            'contactor_state': 'closed' if is_closed else 'opened',
+            'pack_voltage_volts': pack_voltage_v,
+            'switched_voltage_volts': switched_voltage_v,
+            'precharge_percent': precharge_percent,
+            'discharge_current_amps': discharge_current_a,
+            'pack_voltage_mv': pack_voltage,
+            'switched_voltage_mv': switched_voltage,
+            'discharge_current_ma': discharge_current
+        }
+
+        # Generate legacy conditions string for backward compatibility
+        legacy_conditions = (
+            'Pack V: {pv:6.1f}V, '
+            'Switched V: {sv:6.1f}V, '
+            'Prechg Pct: {pc:2.0f}%, '
+            'Dischg Cur: {dc:4.0f}A').format(
+                pv=pack_voltage_v,
+                sv=switched_voltage_v,
+                pc=precharge_percent,
+                dc=discharge_current_a)
+
         return {
-            'event': '{state}'.format(
-                state='Contactor was ' +
-                      ('Closed' if BinaryTools.unpack('bool', x, 0x0) else 'Opened')),
-            'conditions':
-                ('Pack V: {pv:6.1f}V, '
-                 'Switched V: {sv:6.1f}V, '
-                 'Prechg Pct: {pc:2.0f}%, '
-                 'Dischg Cur: {dc:4.0f}A').format(
-                    pv=pack_voltage_v,
-                    sv=switched_voltage_v,
-                    pc=convert_ratio_to_percent(switched_voltage, pack_voltage),
-                    dc=BinaryTools.unpack('int32', x, 0x09) / 1000.0)
+            'event': 'Contactor was ' + ('Closed' if is_closed else 'Opened'),
+            'structured_data': structured_data,  # NEW: Direct structured data
+            'conditions': legacy_conditions  # LEGACY: For backward compatibility
         }
 
     @classmethod
     def bms_discharge_cut(cls, x):
-        # Enhanced percentage calculation matching JS parser
+        # Extract binary data once
         cut_byte = BinaryTools.unpack('uint8', x, 0x00)
         cut_pct = round((cut_byte / 255) * 100)  # JS parser formula
+        
+        # Build structured data
+        structured_data = {
+            'cutback_percent': cut_pct,
+            'cutback_raw_value': cut_byte,
+            'cutback_ratio': cut_byte / 255.0
+        }
+        
+        # Generate legacy conditions string for backward compatibility
+        legacy_conditions = '{cut:2d}%'.format(cut=cut_pct)
+        
         return {
             'event': 'Discharge Cutback',
-            'conditions': '{cut:2d}%'.format(cut=cut_pct)
+            'structured_data': structured_data,
+            'conditions': legacy_conditions
         }
 
     @classmethod
     def bms_contactor_drive(cls, x):
+        # Extract binary data once
+        pack_voltage_raw = BinaryTools.unpack('uint32', x, 0x01)
+        switched_voltage_raw = BinaryTools.unpack('uint32', x, 0x05)
+        duty_cycle = BinaryTools.unpack('uint8', x, 0x09)
+        
         # Convert millivolts to volts for display
-        pack_voltage_v = BinaryTools.unpack('uint32', x, 0x01) / 1000.0
-        switched_voltage_v = BinaryTools.unpack('uint32', x, 0x05) / 1000.0
+        pack_voltage_v = pack_voltage_raw / 1000.0
+        switched_voltage_v = switched_voltage_raw / 1000.0
+        
+        # Build structured data
+        structured_data = {
+            'pack_voltage_volts': pack_voltage_v,
+            'switched_voltage_volts': switched_voltage_v,
+            'duty_cycle_percent': duty_cycle,
+            'pack_voltage_millivolts': pack_voltage_raw,
+            'switched_voltage_millivolts': switched_voltage_raw,
+            'voltage_difference_volts': abs(pack_voltage_v - switched_voltage_v)
+        }
+        
+        # Generate legacy conditions string for backward compatibility
+        legacy_conditions = 'Pack V: {pv:6.1f}V, Switched V: {sv:6.1f}V, Duty Cycle: {dc}%'.format(
+            pv=pack_voltage_v,
+            sv=switched_voltage_v,
+            dc=duty_cycle
+        )
+        
         return {
             'event': 'Contactor drive turned on',
-            'conditions': 'Pack V: {pv:6.1f}V, Switched V: {sv:6.1f}V, Duty Cycle: {dc}%'.format(
-                pv=pack_voltage_v,
-                sv=switched_voltage_v,
-                dc=BinaryTools.unpack('uint8', x, 0x09))
+            'structured_data': structured_data,
+            'conditions': legacy_conditions
         }
 
     @classmethod
@@ -1508,8 +1566,8 @@ class Gen2:
 
     @classmethod
     def battery_status(cls, x):
-        opening_contactor = 'Opening Contactor'
-        closing_contactor = 'Closing Contactor'
+        opening_contactor = 'Opening Contractor'
+        closing_contactor = 'Closing Contractor'
         registered = 'Registered'
         events = {
             0x00: opening_contactor,
@@ -1517,20 +1575,40 @@ class Gen2:
             0x02: registered,
         }
 
+        # Extract binary data once
         event = BinaryTools.unpack('uint8', x, 0x0)
-        event_name = events.get(event, 'Unknown (0x{:02x})'.format(event))
-
+        module_num = BinaryTools.unpack('uint8', x, 0x1)
         mod_volt = convert_mv_to_v(BinaryTools.unpack('uint32', x, 0x2))
         sys_max = convert_mv_to_v(BinaryTools.unpack('uint32', x, 0x6))
         sys_min = convert_mv_to_v(BinaryTools.unpack('uint32', x, 0xa))
         capacitor_volt = convert_mv_to_v(BinaryTools.unpack('uint32', x, 0x0e))
         battery_current = BinaryTools.unpack('int16', x, 0x12)
         serial_no = BinaryTools.unpack_str(x, 0x14, count=len(x[0x14:]))
+        
         # Ensure the serial is printable
         printable_serial_no = ''.join(c for c in serial_no
                                       if c not in string.printable)
         if not printable_serial_no:
             printable_serial_no = hex_of_value(serial_no)
+        
+        event_name = events.get(event, 'Unknown (0x{:02x})'.format(event))
+        
+        # Build structured data
+        structured_data = {
+            'module_number': module_num,
+            'event_type': event_name,
+            'event_code': event,
+            'module_voltage_volts': mod_volt,
+            'system_max_voltage_volts': sys_max,
+            'system_min_voltage_volts': sys_min,
+            'voltage_difference_volts': sys_max - sys_min,
+            'capacitor_voltage_volts': capacitor_volt,
+            'battery_current_amps': battery_current,
+            'serial_number': printable_serial_no,
+            'precharge_percent': convert_ratio_to_percent(capacitor_volt, mod_volt) if event == 1 else None
+        }
+        
+        # Generate legacy conditions string for backward compatibility
         if event_name == opening_contactor:
             conditions_msg = 'vmod: {modvolt:7.3f}V, batt curr: {batcurr:3.0f}A'.format(
                 modvolt=mod_volt,
@@ -1558,9 +1636,10 @@ class Gen2:
 
         return {
             'event': 'Module {module:02} {event}'.format(
-                module=BinaryTools.unpack('uint8', x, 0x1),
+                module=module_num,
                 event=event_name
             ),
+            'structured_data': structured_data,
             'conditions': conditions_msg
         }
 
@@ -1628,30 +1707,65 @@ class Gen2:
 
     @classmethod
     def disarmed_status(cls, x):
+        # Extract raw binary data once into structured format
+        pack_temp_hi = BinaryTools.unpack('uint8', x, 0x0)
+        pack_temp_low = BinaryTools.unpack('uint8', x, 0x1)
+        soc = BinaryTools.unpack('uint16', x, 0x2)
+        pack_voltage = convert_mv_to_v(BinaryTools.unpack('uint32', x, 0x4))
+        motor_temp = BinaryTools.unpack('int16', x, 0x8)
+        controller_temp = BinaryTools.unpack('int16', x, 0xa)
+        rpm = BinaryTools.unpack('uint16', x, 0xc)
+        battery_current = BinaryTools.unpack('uint8', x, 0x10)
+        mods = BinaryTools.unpack('uint8', x, 0x12)
+        motor_current = BinaryTools.unpack('int8', x, 0x13)
+        ambient_temp = BinaryTools.unpack('int16', x, 0x15)
+        odometer = BinaryTools.unpack('uint32', x, 0x17)
+
+        # Build structured data dictionary
+        structured_data = {
+            'pack_temp_high_celsius': pack_temp_hi,
+            'pack_temp_low_celsius': pack_temp_low,
+            'state_of_charge_percent': soc,
+            'pack_voltage_volts': pack_voltage,
+            'motor_temp_celsius': motor_temp,
+            'controller_temp_celsius': controller_temp,
+            'motor_rpm': rpm,
+            'battery_current_amps': battery_current,
+            'motor_current_amps': motor_current,
+            'ambient_temp_celsius': ambient_temp,
+            'odometer_km': odometer,
+            'modules_status': mods,
+            'vehicle_state': 'disarmed'
+        }
+
+        # Generate legacy conditions string for backward compatibility
+        legacy_conditions = (
+            'PackTemp: h {pack_temp_hi}C, l {pack_temp_low}C, '
+            'PackSOC:{soc:3d}%, '
+            'Vpack:{pack_voltage:03.3f}V, '
+            'MotAmps:{motor_current:4d}, BattAmps:{battery_current:4d}, '
+            'Mods: {mods:02b}, '
+            'MotTemp:{motor_temp:4d}C, CtrlTemp:{controller_temp:4d}C, '
+            'AmbTemp:{ambient_temp:4d}C, '
+            'MotRPM:{rpm:4d}, '
+            'Odo:{odometer:5d}km').format(
+                pack_temp_hi=pack_temp_hi,
+                pack_temp_low=pack_temp_low,
+                soc=soc,
+                pack_voltage=pack_voltage,
+                motor_temp=motor_temp,
+                controller_temp=controller_temp,
+                rpm=rpm,
+                battery_current=battery_current,
+                mods=mods,
+                motor_current=motor_current,
+                ambient_temp=ambient_temp,
+                odometer=odometer)
+
         return {
             'event': 'Disarmed',
-            'conditions':
-                ('PackTemp: h {pack_temp_hi}C, l {pack_temp_low}C, '
-                 'PackSOC:{soc:3d}%, '
-                 'Vpack:{pack_voltage:03.3f}V, '
-                 'MotAmps:{motor_current:4d}, BattAmps:{battery_current:4d}, '
-                 'Mods: {mods:02b}, '
-                 'MotTemp:{motor_temp:4d}C, CtrlTemp:{controller_temp:4d}C, '
-                 'AmbTemp:{ambient_temp:4d}C, '
-                 'MotRPM:{rpm:4d}, '
-                 'Odo:{odometer:5d}km').format(
-                    pack_temp_hi=BinaryTools.unpack('uint8', x, 0x0),
-                    pack_temp_low=BinaryTools.unpack('uint8', x, 0x1),
-                    soc=BinaryTools.unpack('uint16', x, 0x2),
-                    pack_voltage=convert_mv_to_v(BinaryTools.unpack('uint32', x, 0x4)),
-                    motor_temp=BinaryTools.unpack('int16', x, 0x8),
-                    controller_temp=BinaryTools.unpack('int16', x, 0xa),
-                    rpm=BinaryTools.unpack('uint16', x, 0xc),
-                    battery_current=BinaryTools.unpack('uint8', x, 0x10),
-                    mods=BinaryTools.unpack('uint8', x, 0x12),
-                    motor_current=BinaryTools.unpack('int8', x, 0x13),
-                    ambient_temp=BinaryTools.unpack('int16', x, 0x15),
-                    odometer=BinaryTools.unpack('uint32', x, 0x17))
+            'structured_data': structured_data,  # NEW: Direct structured data
+            'conditions': legacy_conditions  # LEGACY: For backward compatibility
         }
 
     @classmethod
