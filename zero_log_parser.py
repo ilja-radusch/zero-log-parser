@@ -90,21 +90,21 @@ class ProcessedLogEntry:
     message_type: str = "unknown"
 
 
-def improve_message_parsing(event_text: str, conditions_text: str = None, verbose: bool = None, verbosity_level: int = 1) -> tuple:
+def improve_message_parsing(event_text: str, conditions_text: str = None, verbosity_level: int = 1, logger=None) -> tuple:
     """
     Improve message parsing by removing redundant prefixes and converting structured data to JSON.
-    
+
     Args:
         event_text: The event text to process
         conditions_text: Optional conditions text
-        verbose: Deprecated - use verbosity_level instead
         verbosity_level: Verbosity level (0=quiet, 1=normal, 2=verbose, 3+=very verbose)
+        logger: Logger instance for verbose output
 
     Returns tuple: (improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type)
+
+    Note: This method tracks modifications to help identify which Gen2 binary parsers
+    need to incorporate advanced message parsing directly for optimization.
     """
-    # Handle backward compatibility for verbose parameter
-    if verbose is not None:
-        verbosity_level = 2 if verbose else 1
     if not event_text:
         return event_text, conditions_text, None, False, False, None
 
@@ -133,86 +133,41 @@ def improve_message_parsing(event_text: str, conditions_text: str = None, verbos
         was_modified = True
         modification_type = "prefix_removal"
 
-    # Parse structured data patterns and convert to JSON
-    # NOTE: Most patterns have been moved to optimized Gen2 parsers (19 methods total):
-    # - Discharge level: handled by bms_discharge_level()
-    # - SOC messages: handled by debug_message()
-    # - Riding status: handled by run_status()
-    # - Charging status: handled by charging_status()
-    # - Phase 1: disarmed_status(), bms_contactor_state(), bms_soc_adj_voltage()
-    # - Phase 2: battery_status(), bms_discharge_cut(), bms_contactor_drive()
-    # - Phase 3: bms_curr_sens_zero(), sevcon_status(), bms_isolation_fault(), power_state()
-    # - Phase 4: charger_status(), bms_reflash(), key_state()
-    # - Phase 5: battery_discharge_current_limited(), low_chassis_isolation(), sevcon_power_state(), battery_contactor_closed()
-    # - Additional: vehicle_state_telemetry(), sensor_data()
-    #
-    # All optimized parsers generate structured JSON data directly from binary parsing,
-    # eliminating the previous "string formatting → regex re-parsing" overhead.
-    # Redundant patterns (Module Registered, Current Sensor Zeroed) have been removed.
+    # Handle edge cases only - most patterns have been moved to optimized Gen2 parsers
     try:
-        # All major patterns have been moved to direct Gen2 parser optimization.
-        # Only handle remaining edge cases and hex patterns here.
-        pass
-
-        # Handle abbreviated hex patterns from new format (2025+)
+        # Handle abbreviated hex patterns from newer log formats (2025+)
         if re.match(r'^0x[0-9a-f]+(\s+0x[0-9a-f]+)*$', improved_event or '', re.IGNORECASE):
             # Parse hex pattern like "0x28 0x02" or "0x01"
             hex_parts = improved_event.split()
             if len(hex_parts) >= 1:
                 try:
                     main_type = int(hex_parts[0], 16)
-
-                    # Handle specific abbreviated patterns
+                    # Handle specific abbreviated patterns for newer formats
                     if main_type == 0x28:  # Battery CAN Link Up
                         if len(hex_parts) >= 2:
                             module_num = int(hex_parts[1], 16)
                             improved_event = f"Module {module_num:02d} CAN Link Up"
-                            improved_conditions = None  # Match old format
                         else:
                             improved_event = "Battery CAN Link Up"
-                            improved_conditions = "No module specified"
+                        improved_conditions = None
                         was_modified = True
                         modification_type = "hex_pattern_expansion"
-                        if verbosity_level >= 2:
-                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
+                        if verbosity_level >= 2 and logger:
+                            logger.debug(f"Hex pattern expanded: {original_event} → {improved_event} (needs Gen2 optimization)")
                     elif main_type == 0x29:  # Battery CAN Link Down
                         if len(hex_parts) >= 2:
                             module_num = int(hex_parts[1], 16)
                             improved_event = f"Module {module_num:02d} CAN Link Down"
-                            improved_conditions = None  # Match old format
                         else:
                             improved_event = "Battery CAN Link Down"
-                            improved_conditions = "No module specified"
+                        improved_conditions = None
                         was_modified = True
                         modification_type = "hex_pattern_expansion"
-                        if verbosity_level >= 2:
-                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
-                    elif main_type == 0x01:  # Board Status
-                        improved_event = "Board Status"
-                        if len(hex_parts) >= 2:
-                            status_val = int(hex_parts[1], 16)
-                            improved_conditions = f"Status: 0x{status_val:02x}"
-                        else:
-                            improved_conditions = "No additional data"
-                        was_modified = True
-                        modification_type = "hex_pattern_expansion"
-                        if verbosity_level >= 2:
-                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
-                    elif main_type == 0x2c:  # Riding Status (abbreviated)
-                        # Convert to "Riding" for plotting compatibility
-                        improved_event = "Riding"
-                        if len(hex_parts) >= 2:
-                            status_val = int(hex_parts[1], 16)
-                            improved_conditions = f"Compressed riding data: 0x{status_val:02x}"
-                        else:
-                            improved_conditions = "Compressed riding data"
-                        was_modified = True
-                        modification_type = "hex_pattern_expansion"
-                        if verbosity_level >= 2:
-                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
+                        if verbosity_level >= 2 and logger:
+                            logger.debug(f"Hex pattern expanded: {original_event} → {improved_event} (needs Gen2 optimization)")
                     else:
-                        # Mark other unknown patterns as Unknown
-                        improved_event = f"Unknown (Type {main_type})"
+                        # Mark other unknown hex patterns
+                        improved_event = f"Unknown (Type 0x{main_type:02x})"
                         if len(hex_parts) > 1:
                             data_parts = [f"0x{int(part, 16):02x}" for part in hex_parts[1:]]
                             improved_conditions = f"Data: {' '.join(data_parts)}"
@@ -220,225 +175,29 @@ def improve_message_parsing(event_text: str, conditions_text: str = None, verbos
                             improved_conditions = "No additional data"
                         was_modified = True
                         modification_type = "hex_pattern_expansion"
-                        if verbosity_level >= 2:
-                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
+                        if verbosity_level >= 2 and logger:
+                            logger.debug(f"Hex pattern expanded: {original_event} → {improved_event} (needs Gen2 optimization)")
                 except ValueError:
-                    # If hex conversion fails, mark as Unknown
+                    # If hex conversion fails, mark as malformed
                     improved_event = f"Unknown - {improved_event}"
                     improved_conditions = "Malformed hex pattern"
                     was_modified = True
                     modification_type = "malformed_hex_handling"
-                    if verbose:
-                        print(f"[VERBOSE] Malformed hex handled: {original_event} → {improved_event}")
+                    if verbosity_level >= 2 and logger:
+                        logger.debug(f"Malformed hex handled: {original_event} → {improved_event} (needs Gen2 optimization)")
 
-        # Handle single character entries that might be corrupted
+        # Handle single character entries (likely corrupted)
         elif improved_event and len(improved_event) == 1 and improved_event.isalpha():
             improved_event = f"Unknown - Single character: {improved_event}"
             improved_conditions = "Possibly corrupted entry"
             was_modified = True
             modification_type = "corrupted_entry_handling"
-            if verbose:
-                print(f"[VERBOSE] Corrupted entry handled: {original_event} → {improved_event}")
+            if verbosity_level >= 2 and logger:
+                logger.debug(f"Corrupted entry handled: {original_event} → {improved_event} (needs Gen2 optimization)")
 
-        # Current Sensor Zeroed pattern removed - now handled directly by bms_curr_sens_zero() Gen2 method
-
-        # Module Registered pattern removed - now handled directly by battery_status() Gen2 method
-
-        # Handle Charger messages (Charging/Stopped) - these are in the event field
-        elif 'Charger' in improved_event and 'SN:' in improved_event:
-            charger_match = re.search(
-                r'SN:(\d+) SW:(\d+)\s+(\d+)Vac\s+(\d+)Hz EVSE\s+(\d+)A',
-                improved_event
-            )
-            if charger_match:
-                # Extract the base charger message without the parameters
-                base_event = re.sub(r' SN:.*$', '', improved_event)
-                json_data = {
-                    'serial_number': charger_match.group(1),
-                    'software_version': int(charger_match.group(2)),
-                    'voltage_ac': int(charger_match.group(3)),
-                    'frequency_hz': int(charger_match.group(4)),
-                    'evse_current_amps': int(charger_match.group(5))
-                }
-                improved_event = base_event
-                improved_conditions = json.dumps(json_data)
-
-        # Handle SEVCON CAN EMCY Frame messages
-        elif improved_event == 'SEVCON CAN EMCY Frame' and improved_conditions:
-            sevcon_match = re.match(
-                r'Error Code: 0x([0-9A-F]+), Error Reg: 0x([0-9A-F]+), Sevcon Error Code: 0x([0-9A-F]+), Data: ([0-9A-F\s]+), (.+)',
-                improved_conditions
-            )
-            if sevcon_match:
-                json_data = {
-                    'error_code': '0x' + sevcon_match.group(1),
-                    'error_register': '0x' + sevcon_match.group(2),
-                    'sevcon_error_code': '0x' + sevcon_match.group(3),
-                    'data': sevcon_match.group(4).strip(),
-                    'cause': sevcon_match.group(5).strip()
-                }
-                improved_conditions = json.dumps(json_data)
-
-        # Handle Voltage Across Contactor messages
-        elif improved_event.startswith('Voltage Across Contactor:'):
-            contactor_match = re.match(
-                r'Voltage Across Contactor: (\d+)mV \(([^)]+)\)',
-                improved_event
-            )
-            if contactor_match:
-                json_data = {
-                    'voltage_mv': int(contactor_match.group(1)),
-                    'voltage_v': round(int(contactor_match.group(1)) / 1000.0, 3),
-                    'status': contactor_match.group(2)
-                }
-                improved_event = 'Voltage Across Contactor'
-                improved_conditions = json.dumps(json_data)
-
-        # Handle Disabling Due to lack of CAN control messages
-        elif 'Disabling Due to lack of CAN control messages' in improved_event and 'Dischg Cur:' in improved_event:
-            can_disable_match = re.search(
-                r'Dischg Cur: (\d+)mA',
-                improved_event
-            )
-            if can_disable_match:
-                json_data = {
-                    'discharge_current_ma': int(can_disable_match.group(1)),
-                    'discharge_current_a': round(int(can_disable_match.group(1)) / 1000.0, 3)
-                }
-                improved_event = 'Disabling Due to lack of CAN control messages'
-                improved_conditions = json.dumps(json_data)
-
-        # Handle State Machine Charge Fault messages
-        elif 'State Machine Charge Fault' in improved_event:
-            charge_fault_match = re.search(
-                r'State Machine Charge Fault\. Mode:(\d+), I:(\d+)mA, dV/dt:(\d+)mV/m\((\d+)mV/m\), TSSC:(\d+)ms, TSCO:(\d+)ms, TIPS:(\d+)ms',
-                improved_event
-            )
-            if charge_fault_match:
-                json_data = {
-                    'mode': int(charge_fault_match.group(1)),
-                    'current_ma': int(charge_fault_match.group(2)),
-                    'current_a': round(int(charge_fault_match.group(2)) / 1000.0, 3),
-                    'voltage_rate_mv_per_min': int(charge_fault_match.group(3)),
-                    'voltage_rate_mv_per_min_alt': int(charge_fault_match.group(4)),
-                    'tssc_ms': int(charge_fault_match.group(5)),
-                    'tsco_ms': int(charge_fault_match.group(6)),
-                    'tips_ms': int(charge_fault_match.group(7)),
-                    'tssc_seconds': round(int(charge_fault_match.group(5)) / 1000.0, 3),
-                    'tsco_seconds': round(int(charge_fault_match.group(6)) / 1000.0, 3),
-                    'tips_seconds': round(int(charge_fault_match.group(7)) / 1000.0, 3)
-                }
-                improved_event = 'State Machine Charge Fault'
-                improved_conditions = json.dumps(json_data)
-
-        # Handle Rev: firmware version messages
-        elif improved_event.startswith('Rev:'):
-            rev_match = re.match(
-                r'Rev:(\d+),Build:(\d{4}-\d{2}-\d{2})_(\d{6})\s+(\d+)\s+(\w+)',
-                improved_event
-            )
-            if rev_match:
-                build_date = rev_match.group(2)
-                build_time_raw = rev_match.group(3)
-                # Parse time as HHMMSS
-                build_time = f"{build_time_raw[:2]}:{build_time_raw[2:4]}:{build_time_raw[4:6]}"
-
-                json_data = {
-                    'revision': int(rev_match.group(1)),
-                    'build_date': build_date,
-                    'build_time': build_time,
-                    'build_datetime': f"{build_date} {build_time}",
-                    'build_number': int(rev_match.group(4)),
-                    'branch': rev_match.group(5)
-                }
-                improved_event = 'Firmware Version'
-                improved_conditions = json.dumps(json_data)
-
-        # Handle Pack: battery pack configuration messages
-        elif improved_event.startswith('Pack:'):
-            pack_match = re.match(
-                r'Pack:([^,]+),Numbricks:(\d+)',
-                improved_event
-            )
-            if pack_match:
-                pack_type = pack_match.group(1)
-                num_bricks = int(pack_match.group(2))
-
-                # Parse pack type for additional details
-                pack_details = {}
-                if '_' in pack_type:
-                    parts = pack_type.split('_')
-                    pack_details['year'] = parts[0] if parts[0].isdigit() else None
-                    pack_details['type'] = parts[1] if len(parts) > 1 else pack_type
-                else:
-                    pack_details['type'] = pack_type
-
-                json_data = {
-                    'pack_type': pack_type,
-                    'pack_year': pack_details.get('year'),
-                    'pack_design': pack_details.get('type'),
-                    'number_of_bricks': num_bricks
-                }
-                improved_event = 'Battery Pack Configuration'
-                improved_conditions = json.dumps(json_data)
-
-        # Handle Tipover Detected messages
-        elif 'Tipover Detected!' in improved_event:
-            # Pattern 1: Min/Max values
-            tipover_minmax_match = re.search(
-                r'RawRoll\(min,max\): (-?\d+),(-?\d+) - FiltRoll\(min,max\): (-?\d+),(-?\d+) - RawPit\(min,max\): (-?\d+),(-?\d+) - FiltPit\(min,max\): (-?\d+),(-?\d+)',
-                improved_event
-            )
-            # Pattern 2: Current values
-            tipover_curr_match = re.search(
-                r'RawRoll\(curr\): (-?\d+) - FiltRoll\(curr\): (-?\d+) - RawPit\(curr\): (-?\d+) - FiltPit\(curr\): (-?\d+)',
-                improved_event
-            )
-
-            if tipover_minmax_match:
-                json_data = {
-                    'measurement_type': 'min_max',
-                    'raw_roll_min': int(tipover_minmax_match.group(1)),
-                    'raw_roll_max': int(tipover_minmax_match.group(2)),
-                    'filtered_roll_min': int(tipover_minmax_match.group(3)),
-                    'filtered_roll_max': int(tipover_minmax_match.group(4)),
-                    'raw_pitch_min': int(tipover_minmax_match.group(5)),
-                    'raw_pitch_max': int(tipover_minmax_match.group(6)),
-                    'filtered_pitch_min': int(tipover_minmax_match.group(7)),
-                    'filtered_pitch_max': int(tipover_minmax_match.group(8))
-                }
-                improved_event = 'Tipover Detected'
-                improved_conditions = json.dumps(json_data)
-            elif tipover_curr_match:
-                json_data = {
-                    'measurement_type': 'current',
-                    'raw_roll_current': int(tipover_curr_match.group(1)),
-                    'filtered_roll_current': int(tipover_curr_match.group(2)),
-                    'raw_pitch_current': int(tipover_curr_match.group(3)),
-                    'filtered_pitch_current': int(tipover_curr_match.group(4))
-                }
-                improved_event = 'Tipover Detected'
-                improved_conditions = json.dumps(json_data)
-
-    except (ValueError, AttributeError, IndexError) as e:
+    except (ValueError, AttributeError, IndexError):
         # If parsing fails, keep original format
         pass
-
-    # Handle hex+A pattern entries (likely voltage readings)
-    if re.match(r'^[0-9A-Fa-f]{3,4}A$', improved_event) and not improved_conditions:
-        hex_value = improved_event[:-1]  # Remove 'A' suffix
-        try:
-            decimal_value = int(hex_value, 16)
-            # These appear to be voltage readings in millivolts
-            json_data = {
-                'voltage_mv': decimal_value,
-                'voltage_volts': round(decimal_value / 1000.0, 3)
-            }
-            improved_event = 'Voltage Reading'
-            improved_conditions = json.dumps(json_data)
-        except ValueError:
-            # Keep original if hex parsing fails
-            pass
 
     # Determine if this entry contains JSON data
     has_json_data = json_data is not None
@@ -2255,18 +2014,30 @@ class Gen2:
 
         entry['time'] = cls.timestamp_from_event(unescaped_block, timezone_offset=timezone_offset)
 
-        # Apply improved message parsing and determine log level
-        improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(
-            entry.get('event', ''), entry.get('conditions', ''), verbosity_level=verbosity_level)
+        # Check if Gen2 parser already provided structured data (optimized path)
+        has_structured_data = 'structured_data' in entry
+        if has_structured_data:
+            # Gen2 parser already optimized - skip improve_message_parsing
+            improved_event = entry.get('event', '')
+            improved_conditions = entry.get('conditions', '')
+            has_json_data = True
+        else:
+            # Apply improved message parsing for unoptimized entries
+            improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(
+                entry.get('event', ''), entry.get('conditions', ''), verbosity_level=verbosity_level, logger=logger)
+            entry['event'] = improved_event  # Store the improved event  
+            entry['conditions'] = improved_conditions  # Store the improved conditions
+        
         entry['log_level'] = determine_log_level(improved_event, has_json_data)
-        entry['message_type'] = modification_type if was_modified else "unchanged"
+        # Always store the numeric message type ID
+        entry['message_type'] = str(message_type)
 
         return length, entry, unhandled
 
 
 class Gen3:
     entry_data_fencepost = b'\x00\xb2'
-    Entry = namedtuple('Gen3EntryType', ['event', 'time', 'conditions', 'uninterpreted', 'log_level'])
+    Entry = namedtuple('Gen3EntryType', ['event', 'time', 'conditions', 'uninterpreted', 'log_level', 'message_type'])
     min_timestamp = datetime.strptime('2019-01-01', '%Y-%M-%d')
     max_timestamp = datetime.now() + timedelta(days=365)
 
@@ -2275,7 +2046,7 @@ class Gen3:
         return cls.min_timestamp < event_timestamp < cls.max_timestamp
 
     @classmethod
-    def payload_to_entry(cls, entry_payload: bytearray, hex_on_error=False, logger=None) -> Entry:
+    def payload_to_entry(cls, entry_payload: bytearray, hex_on_error=False, logger=None, verbosity_level=1) -> Entry:
         timestamp_bytes = list(entry_payload[0:4])
         timestamp_int = int.from_bytes(timestamp_bytes, byteorder='big', signed=False)
         event_timestamp = datetime.fromtimestamp(timestamp_int)
@@ -2385,13 +2156,14 @@ class Gen3:
                 conditions_str += (k + ': ' + v) if k and v else k or v
         elif event_conditions:
             conditions_str = event_conditions
-        # Apply improved message parsing and determine log level  
-        improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(event_message, conditions_str, verbosity_level=verbosity_level)
+        # Apply improved message parsing and determine log level
+        improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(event_message, conditions_str, verbosity_level=verbosity_level, logger=logger)
         log_level = determine_log_level(improved_event, has_json_data)
-        message_type = modification_type if was_modified else "unchanged"
+        # Gen3 entries don't have numeric message types, so use "gen3" as identifier
+        message_type = "gen3"
 
-        return cls.Entry(event_message, event_timestamp, conditions_str,
-                         display_bytes_hex(data_payload) if data_payload else '', log_level)
+        return cls.Entry(improved_event, event_timestamp, improved_conditions,
+                         display_bytes_hex(data_payload) if data_payload else '', log_level, message_type)
 
 
 REV0 = 0
@@ -2440,7 +2212,7 @@ class LogData(object):
         """
         if not logger:
             logger = logger_for_input(self.log_file.file_path)
-        
+
         # Use instance verbosity level if not provided
         if verbosity_level is None:
             verbosity_level = getattr(self, 'verbosity_level', 1)
@@ -2500,25 +2272,15 @@ class LogData(object):
                     conditions = entry_payload.get('conditions', '')
                     log_level = entry_payload.get('log_level', 'INFO')
 
-                    # Check if Gen2 parser already returned structured data directly
+                    # Check if message has already been processed by Gen2/Gen3 parsers
+                    existing_message_type = entry_payload.get('message_type')
                     structured_data = entry_payload.get('structured_data')
                     has_json_data = structured_data is not None
 
-                    if has_json_data:
-                        # Use direct structured data from Gen2 parser (optimized path)
-                        improved_message = message
-                        improved_conditions = conditions
-                    else:
-                        # Fall back to regex-based parsing for non-optimized entries
-                        improved_message, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(message, conditions, verbosity_level=verbosity_level)
-
-                        # Parse structured data from regex if available
-                        if improved_conditions and improved_conditions.startswith('{'):
-                            try:
-                                structured_data = json.loads(improved_conditions)
-                                improved_conditions = None  # Remove redundant text version
-                            except json.JSONDecodeError:
-                                pass  # Keep as text if JSON parsing fails
+                    # Message was already processed by Gen2/Gen3 parser - use as-is
+                    improved_message = message
+                    improved_conditions = conditions
+                    message_type = existing_message_type
 
                     processed_entry = ProcessedLogEntry(
                         entry_number=original_entry_num + 1,
@@ -2529,7 +2291,8 @@ class LogData(object):
                         conditions=improved_conditions if improved_conditions else "",
                         uninterpreted="",
                         structured_data=structured_data,
-                        has_structured_data=has_json_data
+                        has_structured_data=has_json_data,
+                        message_type=message_type
                     )
                     processed_entries.append(processed_entry)
 
@@ -2537,19 +2300,22 @@ class LogData(object):
             # Handle REV2 (Gen3) format
             for line, entry_payload in enumerate(self.entries):
                 try:
-                    entry = Gen3.payload_to_entry(entry_payload, logger=logger)
+                    entry = Gen3.payload_to_entry(entry_payload, logger=logger, verbosity_level=verbosity_level)
 
-                    # Apply improved message parsing
-                    improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(entry.event, entry.conditions, verbosity_level=verbosity_level)
+                    # Gen3 parser already processed the message - use the results directly
+                    improved_event = entry.event
+                    improved_conditions = entry.conditions
                     log_level = entry.log_level
-                    message_type = modification_type if was_modified else "unchanged"
+                    message_type = entry.message_type if entry.message_type else "unchanged"
 
                     # Parse structured data if available
                     structured_data = None
+                    has_json_data = False
                     if improved_conditions and improved_conditions.startswith('{'):
                         try:
                             structured_data = json.loads(improved_conditions)
                             improved_conditions = None  # Remove redundant text version
+                            has_json_data = True
                         except json.JSONDecodeError:
                             pass  # Keep as text if JSON parsing fails
 
@@ -3258,7 +3024,7 @@ def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, 
     # Handle backward compatibility for verbose parameter
     if verbose is not None:
         verbosity_level = 2 if verbose else 1
-    
+
     if not logger:
         logger = console_logger(bin_file, verbosity_level=verbosity_level)
     logger.info('Parsing %s', bin_file)
@@ -3302,7 +3068,7 @@ def console_logger(name: str, verbosity_level=1, verbose=None):
     # Handle backward compatibility for verbose parameter
     if verbose is not None:
         verbosity_level = 2 if verbose else 1
-    
+
     # Map verbosity levels to logging levels
     level_map = {
         0: logging.ERROR,    # Quiet - only errors
@@ -3311,7 +3077,7 @@ def console_logger(name: str, verbosity_level=1, verbose=None):
         3: logging.DEBUG,    # Very verbose - same as verbose for logging
         4: logging.DEBUG     # Debug - same as verbose for logging
     }
-    
+
     log_level = level_map.get(verbosity_level, logging.INFO)
     logger = logging.Logger(name, level=log_level)
     logger_formatter = logging.Formatter('%(asctime)s [%(name)s] [%(levelname)s] %(message)s')
@@ -3368,7 +3134,7 @@ def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1,
     # Handle backward compatibility for verbose parameter
     if verbose is not None:
         verbosity_level = 2 if verbose else 1
-    
+
     if not logger:
         logger = console_logger(' + '.join(bin_files), verbosity_level=verbosity_level)
 
