@@ -87,30 +87,42 @@ class ProcessedLogEntry:
     uninterpreted: str = ""
     structured_data: Optional[dict] = None
     has_structured_data: bool = False
+    message_type: str = "unknown"
 
 
-def improve_message_parsing(event_text: str, conditions_text: str = None) -> tuple:
+def improve_message_parsing(event_text: str, conditions_text: str = None, verbose: bool = False) -> tuple:
     """
     Improve message parsing by removing redundant prefixes and converting structured data to JSON.
 
-    Returns tuple: (improved_event, improved_conditions, json_data, has_json_data)
+    Returns tuple: (improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type)
     """
     if not event_text:
-        return event_text, conditions_text, None, False
+        return event_text, conditions_text, None, False, False, None
 
     improved_event = event_text
     improved_conditions = conditions_text
     json_data = None
+    was_modified = False
+    modification_type = None
 
     # Remove redundant DEBUG: prefix since we have log_level
+    original_event = improved_event
     if improved_event.startswith('DEBUG: '):
         improved_event = improved_event[7:]
+        was_modified = True
+        modification_type = "prefix_removal"
     elif improved_event.startswith('INFO: '):
         improved_event = improved_event[6:]
+        was_modified = True
+        modification_type = "prefix_removal"
     elif improved_event.startswith('ERROR: '):
         improved_event = improved_event[7:]
+        was_modified = True
+        modification_type = "prefix_removal"
     elif improved_event.startswith('WARNING: '):
         improved_event = improved_event[9:]
+        was_modified = True
+        modification_type = "prefix_removal"
 
     # Parse structured data patterns and convert to JSON
     # NOTE: Most patterns have been moved to optimized Gen2 parsers (19 methods total):
@@ -150,6 +162,10 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         else:
                             improved_event = "Battery CAN Link Up"
                             improved_conditions = "No module specified"
+                        was_modified = True
+                        modification_type = "hex_pattern_expansion"
+                        if verbose:
+                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                     elif main_type == 0x29:  # Battery CAN Link Down
                         if len(hex_parts) >= 2:
                             module_num = int(hex_parts[1], 16)
@@ -158,6 +174,10 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                         else:
                             improved_event = "Battery CAN Link Down"
                             improved_conditions = "No module specified"
+                        was_modified = True
+                        modification_type = "hex_pattern_expansion"
+                        if verbose:
+                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                     elif main_type == 0x01:  # Board Status
                         improved_event = "Board Status"
                         if len(hex_parts) >= 2:
@@ -165,6 +185,10 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                             improved_conditions = f"Status: 0x{status_val:02x}"
                         else:
                             improved_conditions = "No additional data"
+                        was_modified = True
+                        modification_type = "hex_pattern_expansion"
+                        if verbose:
+                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                     elif main_type == 0x2c:  # Riding Status (abbreviated)
                         # Convert to "Riding" for plotting compatibility
                         improved_event = "Riding"
@@ -173,6 +197,10 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                             improved_conditions = f"Compressed riding data: 0x{status_val:02x}"
                         else:
                             improved_conditions = "Compressed riding data"
+                        was_modified = True
+                        modification_type = "hex_pattern_expansion"
+                        if verbose:
+                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                     else:
                         # Mark other unknown patterns as Unknown
                         improved_event = f"Unknown (Type {main_type})"
@@ -181,15 +209,27 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
                             improved_conditions = f"Data: {' '.join(data_parts)}"
                         else:
                             improved_conditions = "No additional data"
+                        was_modified = True
+                        modification_type = "hex_pattern_expansion"
+                        if verbose:
+                            print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                 except ValueError:
                     # If hex conversion fails, mark as Unknown
                     improved_event = f"Unknown - {improved_event}"
                     improved_conditions = "Malformed hex pattern"
+                    was_modified = True
+                    modification_type = "malformed_hex_handling"
+                    if verbose:
+                        print(f"[VERBOSE] Malformed hex handled: {original_event} → {improved_event}")
 
         # Handle single character entries that might be corrupted
         elif improved_event and len(improved_event) == 1 and improved_event.isalpha():
             improved_event = f"Unknown - Single character: {improved_event}"
             improved_conditions = "Possibly corrupted entry"
+            was_modified = True
+            modification_type = "corrupted_entry_handling"
+            if verbose:
+                print(f"[VERBOSE] Corrupted entry handled: {original_event} → {improved_event}")
 
         # Current Sensor Zeroed pattern removed - now handled directly by bms_curr_sens_zero() Gen2 method
 
@@ -394,7 +434,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
     # Determine if this entry contains JSON data
     has_json_data = json_data is not None
 
-    return improved_event, improved_conditions, json_data, has_json_data
+    return improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type
 
 
 def determine_log_level(message: str, is_json_data: bool = False) -> str:
@@ -2207,9 +2247,11 @@ class Gen2:
         entry['time'] = cls.timestamp_from_event(unescaped_block, timezone_offset=timezone_offset)
 
         # Apply improved message parsing and determine log level
-        improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(
-            entry.get('event', ''), entry.get('conditions', ''))
+        verbose_mode = False  # TODO: Add verbose parameter to this function if needed
+        improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(
+            entry.get('event', ''), entry.get('conditions', ''), verbose_mode)
         entry['log_level'] = determine_log_level(improved_event, has_json_data)
+        entry['message_type'] = modification_type if was_modified else "unchanged"
 
         return length, entry, unhandled
 
@@ -2336,8 +2378,10 @@ class Gen3:
         elif event_conditions:
             conditions_str = event_conditions
         # Apply improved message parsing and determine log level
-        improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(event_message, conditions_str)
+        verbose_mode = False  # TODO: Add verbose parameter to this function if needed
+        improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(event_message, conditions_str, verbose_mode)
         log_level = determine_log_level(improved_event, has_json_data)
+        message_type = modification_type if was_modified else "unchanged"
 
         return cls.Entry(event_message, event_timestamp, conditions_str,
                          display_bytes_hex(data_payload) if data_payload else '', log_level)
@@ -2454,7 +2498,8 @@ class LogData(object):
                         improved_conditions = conditions
                     else:
                         # Fall back to regex-based parsing for non-optimized entries
-                        improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
+                        verbose_mode = False  # TODO: Add verbose parameter to this function if needed
+                        improved_message, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(message, conditions, verbose_mode)
 
                         # Parse structured data from regex if available
                         if improved_conditions and improved_conditions.startswith('{'):
@@ -2484,8 +2529,10 @@ class LogData(object):
                     entry = Gen3.payload_to_entry(entry_payload, logger=logger)
 
                     # Apply improved message parsing
-                    improved_event, improved_conditions, json_data, has_json_data = improve_message_parsing(entry.event, entry.conditions)
+                    verbose_mode = False  # TODO: Add verbose parameter to this function if needed
+                    improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(entry.event, entry.conditions, verbose_mode)
                     log_level = entry.log_level
+                    message_type = modification_type if was_modified else "unchanged"
 
                     # Parse structured data if available
                     structured_data = None
@@ -2505,7 +2552,8 @@ class LogData(object):
                         conditions=improved_conditions if improved_conditions else "",
                         uninterpreted=entry.uninterpreted if entry.uninterpreted else "",
                         structured_data=structured_data,
-                        has_structured_data=has_json_data
+                        has_structured_data=has_json_data,
+                        message_type=message_type
                     )
                     processed_entries.append(processed_entry)
                 except Exception as e:
@@ -2903,7 +2951,8 @@ class LogData(object):
                 'event': entry.event,
                 'conditions': entry.conditions if entry.conditions and not entry.structured_data else None,
                 'uninterpreted': entry.uninterpreted if entry.uninterpreted else None,
-                'is_structured_data': entry.has_structured_data
+                'is_structured_data': entry.has_structured_data,
+                'message_type': entry.message_type
             }
 
             # Add structured data if available
