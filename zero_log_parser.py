@@ -13,20 +13,20 @@ Usage:
 
 Architecture:
 This parser uses a hybrid approach combining Gen2/Gen3 binary parsing with
-structured data extraction. Gen2 parsers have been optimized to generate 
-structured data directly from binary data, eliminating the "string formatting 
+structured data extraction. Gen2 parsers have been optimized to generate
+structured data directly from binary data, eliminating the "string formatting
 → regex re-parsing" overhead that existed previously.
 
 Gen2 Parser Optimization - Completed (15 methods):
 - Phase 1: disarmed_status(), bms_contactor_state(), bms_soc_adj_voltage()
-- Phase 2: battery_status(), bms_discharge_cut(), bms_contactor_drive()  
+- Phase 2: battery_status(), bms_discharge_cut(), bms_contactor_drive()
 - Phase 3: bms_curr_sens_zero(), sevcon_status(), bms_isolation_fault(), power_state()
 - Phase 4: charger_status(), bms_reflash(), key_state()
 - Additional: vehicle_state_telemetry(), sensor_data()
 
 All optimized parsers use direct binary extraction via BinaryTools.unpack() and
 generate structured JSON data with human-readable conditions for all output formats.
-This eliminates the previous "string formatting → regex re-parsing" overhead while 
+This eliminates the previous "string formatting → regex re-parsing" overhead while
 maintaining full backward compatibility.
 
 """
@@ -114,7 +114,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
     # Parse structured data patterns and convert to JSON
     # NOTE: Most patterns have been moved to optimized Gen2 parsers (15 methods total):
     # - Discharge level: handled by bms_discharge_level()
-    # - SOC messages: handled by debug_message() 
+    # - SOC messages: handled by debug_message()
     # - Riding status: handled by run_status()
     # - Charging status: handled by charging_status()
     # - Phase 1: disarmed_status(), bms_contactor_state(), bms_soc_adj_voltage()
@@ -122,7 +122,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None) -> tup
     # - Phase 3: bms_curr_sens_zero(), sevcon_status(), bms_isolation_fault(), power_state()
     # - Phase 4: charger_status(), bms_reflash(), key_state()
     # - Additional: vehicle_state_telemetry(), sensor_data()
-    # 
+    #
     # All optimized parsers generate structured JSON data directly from binary parsing,
     # eliminating the previous "string formatting → regex re-parsing" overhead.
     try:
@@ -921,7 +921,7 @@ class Gen2:
             0x02: 'Charge',
             0x03: 'Idle'
         }
-        
+
         # Extract raw data once from binary
         structured_data = {
             'amp_hours': trunc(BinaryTools.unpack('uint32', x, 0x06) / 1000000.0),
@@ -978,7 +978,7 @@ class Gen2:
     def bms_charge_full(cls, x):
         # Extract raw binary data once into structured format
         fields = cls.bms_charge_event_fields(x)
-        
+
         # Build structured data dictionary with descriptive names
         structured_data = {
             'amp_hours': fields['AH'],
@@ -1046,7 +1046,7 @@ class Gen2:
         new_uah = BinaryTools.unpack('uint32', x, 0x05)
         new_soc = BinaryTools.unpack('uint8', x, 0x09)
         low_cell_mv = BinaryTools.unpack('uint16', x, 0x0a)
-        
+
         # Build structured data
         structured_data = {
             'old_capacity_microamp_hours': old_uah,
@@ -1057,7 +1057,7 @@ class Gen2:
             'capacity_change_microamp_hours': new_uah - old_uah,
             'soc_change_percent': new_soc - old_soc
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         legacy_conditions = ('old:   {old}uAH (soc:{old_soc}%), '
                            'new:   {new}uAH (soc:{new_soc}%), '
@@ -1065,7 +1065,7 @@ class Gen2:
                               old=old_uah, old_soc=old_soc,
                               new=new_uah, new_soc=new_soc,
                               low=low_cell_mv)
-        
+
         return {
             'event': 'SOC adjusted for voltage',
             'structured_data': structured_data,
@@ -1078,7 +1078,7 @@ class Gen2:
         old_mv = BinaryTools.unpack('uint16', x, 0x00)
         new_mv = BinaryTools.unpack('uint16', x, 0x02)
         corrfact = BinaryTools.unpack('uint8', x, 0x04)
-        
+
         # Build structured data
         structured_data = {
             'old_value_millivolts': old_mv,
@@ -1088,12 +1088,12 @@ class Gen2:
             'new_value_volts': new_mv / 1000.0,
             'adjustment_millivolts': new_mv - old_mv
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         legacy_conditions = 'old: {old}mV, new: {new}mV, corrfact: {corrfact}'.format(
             old=old_mv, new=new_mv, corrfact=corrfact
         )
-        
+
         return {
             'event': 'Current Sensor Zeroed',
             'structured_data': structured_data,
@@ -1112,7 +1112,7 @@ class Gen2:
         # Extract binary data once
         resistance_ohms = BinaryTools.unpack('uint32', x, 0x00)
         cell_number = BinaryTools.unpack('uint8', x, 0x04)
-        
+
         # Build structured data
         structured_data = {
             'resistance_ohms': resistance_ohms,
@@ -1122,12 +1122,12 @@ class Gen2:
             'is_low_resistance': resistance_ohms < 1000000,  # Less than 1 megaohm is concerning
             'fault_severity': 'critical' if resistance_ohms < 100000 else 'warning' if resistance_ohms < 1000000 else 'info'
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         legacy_conditions = '{ohms} ohms to cell {cell}'.format(
             ohms=resistance_ohms, cell=cell_number
         )
-        
+
         return {
             'event': 'Chassis Isolation Fault',
             'structured_data': structured_data,
@@ -1139,7 +1139,7 @@ class Gen2:
         # Extract binary data once
         revision = BinaryTools.unpack('uint8', x, 0x00)
         build_str = BinaryTools.unpack_str(x, 0x01, 20)
-        
+
         # Build structured data
         structured_data = {
             'revision': revision,
@@ -1148,12 +1148,12 @@ class Gen2:
             'is_printable_build': all(c.isprintable() for c in build_str),
             'build_length': len(build_str.rstrip('\x00'))
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         legacy_conditions = 'Revision {rev}, Built {build}'.format(
             rev=revision, build=build_str
         )
-        
+
         return {
             'event': 'BMS Reflash',
             'structured_data': structured_data,
@@ -1176,13 +1176,13 @@ class Gen2:
         pack_voltage = BinaryTools.unpack('uint32', x, 0x01)
         switched_voltage = BinaryTools.unpack('uint32', x, 0x05)
         discharge_current = BinaryTools.unpack('int32', x, 0x09)
-        
+
         # Convert to display units
         pack_voltage_v = pack_voltage / 1000.0
         switched_voltage_v = switched_voltage / 1000.0
         discharge_current_a = discharge_current / 1000.0
         precharge_percent = convert_ratio_to_percent(switched_voltage, pack_voltage)
-        
+
         # Build structured data dictionary
         structured_data = {
             'contactor_state': 'closed' if is_closed else 'opened',
@@ -1217,17 +1217,17 @@ class Gen2:
         # Extract binary data once
         cut_byte = BinaryTools.unpack('uint8', x, 0x00)
         cut_pct = round((cut_byte / 255) * 100)  # JS parser formula
-        
+
         # Build structured data
         structured_data = {
             'cutback_percent': cut_pct,
             'cutback_raw_value': cut_byte,
             'cutback_ratio': cut_byte / 255.0
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         legacy_conditions = '{cut:2d}%'.format(cut=cut_pct)
-        
+
         return {
             'event': 'Discharge Cutback',
             'structured_data': structured_data,
@@ -1240,11 +1240,11 @@ class Gen2:
         pack_voltage_raw = BinaryTools.unpack('uint32', x, 0x01)
         switched_voltage_raw = BinaryTools.unpack('uint32', x, 0x05)
         duty_cycle = BinaryTools.unpack('uint8', x, 0x09)
-        
+
         # Convert millivolts to volts for display
         pack_voltage_v = pack_voltage_raw / 1000.0
         switched_voltage_v = switched_voltage_raw / 1000.0
-        
+
         # Build structured data
         structured_data = {
             'pack_voltage_volts': pack_voltage_v,
@@ -1254,14 +1254,14 @@ class Gen2:
             'switched_voltage_millivolts': switched_voltage_raw,
             'voltage_difference_volts': abs(pack_voltage_v - switched_voltage_v)
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         legacy_conditions = 'Pack V: {pv:6.1f}V, Switched V: {sv:6.1f}V, Duty Cycle: {dc}%'.format(
             pv=pack_voltage_v,
             sv=switched_voltage_v,
             dc=duty_cycle
         )
-        
+
         return {
             'event': 'Contactor drive turned on',
             'structured_data': structured_data,
@@ -1272,7 +1272,7 @@ class Gen2:
     def debug_message(cls, x):
         # Extract the debug message string
         message = BinaryTools.unpack_str(x, 0x0, count=len(x) - 1)
-        
+
         # Check if this is a SOC data message and optimize it directly
         if message.startswith('SOC:'):
             soc_data = message[4:]  # Remove 'SOC:' prefix
@@ -1346,7 +1346,7 @@ class Gen2:
                         'structured_data': structured_data,  # NEW: Direct structured data
                         'conditions': message  # LEGACY: For backward compatibility
                     }
-        
+
         # For non-SOC debug messages, return as normal
         return {
             'event': message
@@ -1369,7 +1369,7 @@ class Gen2:
         # Extract binary data once
         key_on = BinaryTools.unpack('bool', x, 0x0)
         key_state_text = convert_bit_to_on_off(key_on)
-        
+
         # Build structured data
         structured_data = {
             'key_on': key_on,
@@ -1377,7 +1377,7 @@ class Gen2:
             'is_key_on': key_on,
             'is_key_off': not key_on
         }
-        
+
         # Generate legacy event string for backward compatibility
         event_name = 'Key ' + key_state_text + (' ' if key_on else '')
 
@@ -1541,7 +1541,7 @@ class Gen2:
         sevcon_code = BinaryTools.unpack('uint16', x, 0x02)
         error_reg = BinaryTools.unpack('uint8', x, 0x04)
         additional_data = x[5:] if len(x) > 5 else []
-        
+
         # Build structured data
         structured_data = {
             'error_code': error_code,
@@ -1555,7 +1555,7 @@ class Gen2:
             'cause': cause.get(sevcon_code, 'Unknown'),
             'is_known_error': sevcon_code in cause
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         legacy_conditions = ('Error Code: 0x{code:04X}, Error Reg: 0x{reg:02X}, '
                            'Sevcon Error Code: 0x{sevcon_code:04X}, Data: {data}, {cause}').format(
@@ -1591,7 +1591,7 @@ class Gen2:
         charger_id = BinaryTools.unpack('uint8', x, 0x0)
         state_name = states.get(charger_state_code, 'Unknown')
         charger_name = name.get(charger_id, 'Unknown')
-        
+
         # Build structured data
         structured_data = {
             'charger_id': charger_id,
@@ -1604,7 +1604,7 @@ class Gen2:
             'is_external_charger': charger_id in [0x02, 0x03],
             'is_known_charger': charger_id in name
         }
-        
+
         # Generate legacy event string for backward compatibility
         event_name = '{name} Charger {charger_id} {state:13s}'.format(
             charger_id=charger_id,
@@ -1637,15 +1637,15 @@ class Gen2:
         capacitor_volt = convert_mv_to_v(BinaryTools.unpack('uint32', x, 0x0e))
         battery_current = BinaryTools.unpack('int16', x, 0x12)
         serial_no = BinaryTools.unpack_str(x, 0x14, count=len(x[0x14:]))
-        
+
         # Ensure the serial is printable
         printable_serial_no = ''.join(c for c in serial_no
                                       if c not in string.printable)
         if not printable_serial_no:
             printable_serial_no = hex_of_value(serial_no)
-        
+
         event_name = events.get(event, 'Unknown (0x{:02x})'.format(event))
-        
+
         # Build structured data
         structured_data = {
             'module_number': module_num,
@@ -1660,7 +1660,7 @@ class Gen2:
             'serial_number': printable_serial_no,
             'precharge_percent': convert_ratio_to_percent(capacitor_volt, mod_volt) if event == 1 else None
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         if event_name == opening_contactor:
             conditions_msg = 'vmod: {modvolt:7.3f}V, batt curr: {batcurr:3.0f}A'.format(
@@ -1710,7 +1710,7 @@ class Gen2:
         power_on = BinaryTools.unpack('bool', x, 0x0)
         power_state_text = convert_bit_to_on_off(power_on)
         source_name = sources.get(power_on_cause_code, 'Unknown')
-        
+
         # Build structured data
         structured_data = {
             'power_on': power_on,
@@ -1722,7 +1722,7 @@ class Gen2:
             'is_onboard_charger': power_on_cause_code == 0x04,
             'is_known_source': power_on_cause_code in sources
         }
-        
+
         # Generate legacy conditions string for backward compatibility
         legacy_conditions = source_name
 
@@ -1850,7 +1850,7 @@ class Gen2:
     @classmethod
     def vehicle_state_telemetry(cls, x):
         """Parse Type 81 (0x51) - Vehicle State Telemetry (68 bytes)
-        
+
         Optimized Gen2 parser - generates structured data directly from binary.
         Returns ProcessedLogEntry with both human-readable conditions and structured JSON data.
         """
@@ -1917,7 +1917,7 @@ class Gen2:
     @classmethod
     def sensor_data(cls, x):
         """Parse Type 84 (0x54) - Sensor Data (22 bytes)
-        
+
         Optimized Gen2 parser - generates structured data directly from binary.
         Returns structured sensor telemetry with both human-readable conditions and structured JSON data.
         """
@@ -1927,7 +1927,7 @@ class Gen2:
         # Extract binary data using BinaryTools.unpack()
         odometer_m = BinaryTools.unpack('uint32', x, 0)      # Distance in meters
         sensor1 = BinaryTools.unpack('uint32', x, 4)         # Sensor value 1
-        sensor2 = BinaryTools.unpack('uint32', x, 8)         # Sensor value 2  
+        sensor2 = BinaryTools.unpack('uint32', x, 8)         # Sensor value 2
         sensor3 = BinaryTools.unpack('uint32', x, 12)        # Sensor value 3
         sensor4 = BinaryTools.unpack('uint32', x, 16)        # Sensor value 4
         status = BinaryTools.unpack('uint16', x, 20)         # Status flags
@@ -2412,7 +2412,7 @@ class LogData(object):
                     else:
                         # Fall back to regex-based parsing for non-optimized entries
                         improved_message, improved_conditions, json_data, has_json_data = improve_message_parsing(message, conditions)
-                        
+
                         # Parse structured data from regex if available
                         if improved_conditions and improved_conditions.startswith('{'):
                             try:
@@ -2924,13 +2924,13 @@ class LogData(object):
                 """Format structured data as readable key-value pairs"""
                 if not structured_data:
                     return ""
-                
+
                 # Create readable key-value pairs
                 formatted_pairs = []
                 for key, value in structured_data.items():
                     # Convert snake_case to readable format
                     readable_key = key.replace('_', ' ').title()
-                    
+
                     # Format value based on type and key patterns
                     if isinstance(value, str):
                         formatted_value = value
@@ -2941,16 +2941,16 @@ class LogData(object):
                     elif 'amps' in key.lower() or 'current' in key.lower():
                         formatted_value = f"{value}A"
                     elif 'mv' in key.lower():
-                        formatted_value = f"{value}mV"  
+                        formatted_value = f"{value}mV"
                     elif 'volts' in key.lower() or 'voltage' in key.lower():
                         formatted_value = f"{value}V"
                     elif 'celsius' in key.lower() or 'temp' in key.lower():
                         formatted_value = f"{value}°C"
                     else:
                         formatted_value = str(value)
-                    
+
                     formatted_pairs.append(f"{readable_key}: {formatted_value}")
-                
+
                 return ", ".join(formatted_pairs)
 
             # Output processed entries with zero-compatible formatting
@@ -2966,7 +2966,7 @@ class LogData(object):
                     conditions_display = format_structured_data(entry.structured_data)
                 elif entry.conditions:
                     conditions_display = entry.conditions
-                
+
                 if conditions_display:
                     if '???' in conditions_display:
                         u = conditions_display[0]
