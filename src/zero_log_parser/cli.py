@@ -59,8 +59,15 @@ def create_parser() -> argparse.ArgumentParser:
     
     parser.add_argument(
         '-v', '--verbose',
+        action='count',
+        default=1,
+        help="Increase verbosity level (-v, -vv, -vvv for levels 2, 3, 4)"
+    )
+    
+    parser.add_argument(
+        '-q', '--quiet',
         action='store_true',
-        help="Enable verbose output"
+        help="Quiet mode (verbosity level 0)"
     )
     
     parser.add_argument(
@@ -106,9 +113,22 @@ def determine_output_file(input_files: list, output_file: Optional[str], format_
         return generate_merged_output_name(input_files, format_type)
 
 
-def setup_logging(verbose: bool) -> logging.Logger:
-    """Setup logging configuration."""
-    level = logging.DEBUG if verbose else logging.INFO
+def setup_logging(verbosity_level: int) -> logging.Logger:
+    """Setup logging configuration based on verbosity level.
+    
+    Args:
+        verbosity_level: 0=quiet, 1=normal, 2=verbose, 3=very verbose, 4=debug
+    """
+    # Map verbosity levels to logging levels
+    level_map = {
+        0: logging.ERROR,    # Quiet - only errors
+        1: logging.INFO,     # Normal - info and above
+        2: logging.DEBUG,    # Verbose - debug and above
+        3: logging.DEBUG,    # Very verbose - same as verbose for logging
+        4: logging.DEBUG     # Debug - same as verbose for logging
+    }
+    
+    level = level_map.get(verbosity_level, logging.INFO)
     logging.basicConfig(
         level=level,
         format='%(asctime)s [%(name)s] [%(levelname)s] %(message)s',
@@ -124,8 +144,14 @@ def main() -> int:
         parser = create_parser()
         args = parser.parse_args()
         
+        # Calculate verbosity level
+        if args.quiet:
+            verbosity_level = 0
+        else:
+            verbosity_level = args.verbose
+        
         # Setup logging
-        logger = setup_logging(args.verbose)
+        logger = setup_logging(verbosity_level)
         
         # Validate input files
         validate_input_files(args.input_files)
@@ -177,7 +203,7 @@ def main() -> int:
                 bin_file=input_file,
                 output_file=output_file,
                 tz_code=args.timezone,
-                verbose=args.verbose,
+                verbosity_level=verbosity_level,
                 logger=logger,
                 output_format=args.format,
                 start_time=start_time,
@@ -191,7 +217,7 @@ def main() -> int:
                 bin_files=args.input_files,
                 output_file=output_file,
                 tz_code=args.timezone,
-                verbose=args.verbose,
+                verbosity_level=verbosity_level,
                 logger=logger,
                 output_format=args.format,
                 start_time=start_time,

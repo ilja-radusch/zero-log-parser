@@ -90,12 +90,21 @@ class ProcessedLogEntry:
     message_type: str = "unknown"
 
 
-def improve_message_parsing(event_text: str, conditions_text: str = None, verbose: bool = False) -> tuple:
+def improve_message_parsing(event_text: str, conditions_text: str = None, verbose: bool = None, verbosity_level: int = 1) -> tuple:
     """
     Improve message parsing by removing redundant prefixes and converting structured data to JSON.
+    
+    Args:
+        event_text: The event text to process
+        conditions_text: Optional conditions text
+        verbose: Deprecated - use verbosity_level instead
+        verbosity_level: Verbosity level (0=quiet, 1=normal, 2=verbose, 3+=very verbose)
 
     Returns tuple: (improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type)
     """
+    # Handle backward compatibility for verbose parameter
+    if verbose is not None:
+        verbosity_level = 2 if verbose else 1
     if not event_text:
         return event_text, conditions_text, None, False, False, None
 
@@ -164,7 +173,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None, verbos
                             improved_conditions = "No module specified"
                         was_modified = True
                         modification_type = "hex_pattern_expansion"
-                        if verbose:
+                        if verbosity_level >= 2:
                             print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                     elif main_type == 0x29:  # Battery CAN Link Down
                         if len(hex_parts) >= 2:
@@ -176,7 +185,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None, verbos
                             improved_conditions = "No module specified"
                         was_modified = True
                         modification_type = "hex_pattern_expansion"
-                        if verbose:
+                        if verbosity_level >= 2:
                             print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                     elif main_type == 0x01:  # Board Status
                         improved_event = "Board Status"
@@ -187,7 +196,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None, verbos
                             improved_conditions = "No additional data"
                         was_modified = True
                         modification_type = "hex_pattern_expansion"
-                        if verbose:
+                        if verbosity_level >= 2:
                             print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                     elif main_type == 0x2c:  # Riding Status (abbreviated)
                         # Convert to "Riding" for plotting compatibility
@@ -199,7 +208,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None, verbos
                             improved_conditions = "Compressed riding data"
                         was_modified = True
                         modification_type = "hex_pattern_expansion"
-                        if verbose:
+                        if verbosity_level >= 2:
                             print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                     else:
                         # Mark other unknown patterns as Unknown
@@ -211,7 +220,7 @@ def improve_message_parsing(event_text: str, conditions_text: str = None, verbos
                             improved_conditions = "No additional data"
                         was_modified = True
                         modification_type = "hex_pattern_expansion"
-                        if verbose:
+                        if verbosity_level >= 2:
                             print(f"[VERBOSE] Hex pattern expanded: {original_event} → {improved_event}")
                 except ValueError:
                     # If hex conversion fails, mark as Unknown
@@ -2149,7 +2158,7 @@ class Gen2:
         }
 
     @classmethod
-    def parse_entry(cls, log_data, address, unhandled, logger, timezone_offset=None):
+    def parse_entry(cls, log_data, address, unhandled, logger, timezone_offset=None, verbosity_level=1):
         """
         Parse an individual entry from a LogFile into a human readable form
         """
@@ -2247,9 +2256,8 @@ class Gen2:
         entry['time'] = cls.timestamp_from_event(unescaped_block, timezone_offset=timezone_offset)
 
         # Apply improved message parsing and determine log level
-        verbose_mode = False  # TODO: Add verbose parameter to this function if needed
         improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(
-            entry.get('event', ''), entry.get('conditions', ''), verbose_mode)
+            entry.get('event', ''), entry.get('conditions', ''), verbosity_level=verbosity_level)
         entry['log_level'] = determine_log_level(improved_event, has_json_data)
         entry['message_type'] = modification_type if was_modified else "unchanged"
 
@@ -2377,9 +2385,8 @@ class Gen3:
                 conditions_str += (k + ': ' + v) if k and v else k or v
         elif event_conditions:
             conditions_str = event_conditions
-        # Apply improved message parsing and determine log level
-        verbose_mode = False  # TODO: Add verbose parameter to this function if needed
-        improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(event_message, conditions_str, verbose_mode)
+        # Apply improved message parsing and determine log level  
+        improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(event_message, conditions_str, verbosity_level=verbosity_level)
         log_level = determine_log_level(improved_event, has_json_data)
         message_type = modification_type if was_modified else "unchanged"
 
@@ -2402,9 +2409,10 @@ class LogData(object):
     :type timezone_offset: int
     """
 
-    def __init__(self, log_file: LogFile, timezone_offset=None):
+    def __init__(self, log_file: LogFile, timezone_offset=None, verbosity_level=1):
         self.log_file = log_file
         self.timezone_offset = timezone_offset
+        self.verbosity_level = verbosity_level
         self.log_version, self.header_info = self.get_version_and_header(log_file)
         self.entries_count, self.entries = self.get_entries_and_counts(log_file)
 
@@ -2425,13 +2433,17 @@ class LogData(object):
             # If all parsing fails, return epoch
             return datetime.fromtimestamp(0)
 
-    def _collect_and_process_entries(self, logger=None, start_time=None, end_time=None):
+    def _collect_and_process_entries(self, logger=None, start_time=None, end_time=None, verbosity_level=None):
         """
         Centralized method to collect, parse, filter, and sort all log entries.
         Returns a list of ProcessedLogEntry objects ready for output formatting.
         """
         if not logger:
             logger = logger_for_input(self.log_file.file_path)
+        
+        # Use instance verbosity level if not provided
+        if verbosity_level is None:
+            verbosity_level = getattr(self, 'verbosity_level', 1)
 
         processed_entries = []
 
@@ -2446,7 +2458,7 @@ class LogData(object):
                         (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
                                                                               0,  # unhandled counter
                                                                               timezone_offset=self.timezone_offset,
-                                                                              logger=logger)
+                                                                              logger=logger, verbosity_level=verbosity_level)
 
                         # Extract timestamp for sorting
                         time_str = entry_payload.get('time', '0')
@@ -2498,8 +2510,7 @@ class LogData(object):
                         improved_conditions = conditions
                     else:
                         # Fall back to regex-based parsing for non-optimized entries
-                        verbose_mode = False  # TODO: Add verbose parameter to this function if needed
-                        improved_message, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(message, conditions, verbose_mode)
+                        improved_message, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(message, conditions, verbosity_level=verbosity_level)
 
                         # Parse structured data from regex if available
                         if improved_conditions and improved_conditions.startswith('{'):
@@ -2529,8 +2540,7 @@ class LogData(object):
                     entry = Gen3.payload_to_entry(entry_payload, logger=logger)
 
                     # Apply improved message parsing
-                    verbose_mode = False  # TODO: Add verbose parameter to this function if needed
-                    improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(entry.event, entry.conditions, verbose_mode)
+                    improved_event, improved_conditions, json_data, has_json_data, was_modified, modification_type = improve_message_parsing(entry.event, entry.conditions, verbosity_level=verbosity_level)
                     log_level = entry.log_level
                     message_type = modification_type if was_modified else "unchanged"
 
@@ -3122,7 +3132,7 @@ class LogData(object):
                 try:
                     (length, entry_payload, _) = Gen2.parse_entry(self.entries, read_pos, 0,
                                                                   logger_for_input('merge'),
-                                                                  timezone_offset=self.timezone_offset)
+                                                                  timezone_offset=self.timezone_offset, verbosity_level=1)
                     entry_key = self._get_entry_key(entry_payload, 0)
                     existing_entries.add(entry_key)
                     read_pos += length
@@ -3136,7 +3146,7 @@ class LogData(object):
                 try:
                     (length, entry_payload, _) = Gen2.parse_entry(other_entries, read_pos, 0,
                                                                   logger_for_input('merge'),
-                                                                  timezone_offset=self.timezone_offset)
+                                                                  timezone_offset=self.timezone_offset, verbosity_level=1)
                     entry_key = self._get_entry_key(entry_payload, 0)
 
                     # Only add if not a duplicate
@@ -3241,18 +3251,22 @@ class LogData(object):
         return other.__add__(self)
 
 
-def parse_log(bin_file: str, output_file: str, tz_code=None, verbose=False, logger=None, output_format='txt', start_time=None, end_time=None):
+def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None):
     """
     Parse a Zero binary log file into a human readable text file
     """
+    # Handle backward compatibility for verbose parameter
+    if verbose is not None:
+        verbosity_level = 2 if verbose else 1
+    
     if not logger:
-        logger = console_logger(bin_file, verbose=verbose)
+        logger = console_logger(bin_file, verbosity_level=verbosity_level)
     logger.info('Parsing %s', bin_file)
 
     timezone_offset = get_timezone_offset(tz_code)
 
     log = LogFile(bin_file)
-    log_data = LogData(log, timezone_offset=timezone_offset)
+    log_data = LogData(log, timezone_offset=timezone_offset, verbosity_level=verbosity_level)
 
     if output_format.lower() in ['csv', 'tsv']:
         # Generate CSV/TSV output
@@ -3284,8 +3298,21 @@ def is_log_file_path(file_path: str):
     return file_path.endswith('.bin')
 
 
-def console_logger(name: str, verbose=False):
-    log_level = logging.NOTSET if verbose else logging.INFO
+def console_logger(name: str, verbosity_level=1, verbose=None):
+    # Handle backward compatibility for verbose parameter
+    if verbose is not None:
+        verbosity_level = 2 if verbose else 1
+    
+    # Map verbosity levels to logging levels
+    level_map = {
+        0: logging.ERROR,    # Quiet - only errors
+        1: logging.INFO,     # Normal - info and above
+        2: logging.DEBUG,    # Verbose - debug and above
+        3: logging.DEBUG,    # Very verbose - same as verbose for logging
+        4: logging.DEBUG     # Debug - same as verbose for logging
+    }
+    
+    log_level = level_map.get(verbosity_level, logging.INFO)
     logger = logging.Logger(name, level=log_level)
     logger_formatter = logging.Formatter('%(asctime)s [%(name)s] [%(levelname)s] %(message)s')
     logger_handler = logging.StreamHandler()
@@ -3326,7 +3353,7 @@ def generate_merged_output_name(bin_files, output_format='txt'):
     return filename
 
 
-def parse_multiple_logs(bin_files, output_file, tz_code=None, verbose=False, logger=None, output_format='txt', start_time=None, end_time=None):
+def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None):
     """
     Parse multiple Zero binary log files and merge them intelligently
 
@@ -3338,8 +3365,12 @@ def parse_multiple_logs(bin_files, output_file, tz_code=None, verbose=False, log
         logger: Logger instance
         output_format: Output format (txt, csv, tsv, json)
     """
+    # Handle backward compatibility for verbose parameter
+    if verbose is not None:
+        verbosity_level = 2 if verbose else 1
+    
     if not logger:
-        logger = console_logger(' + '.join(bin_files), verbose=verbose)
+        logger = console_logger(' + '.join(bin_files), verbosity_level=verbosity_level)
 
     logger.info('Multi-file parsing: %d files', len(bin_files))
 
@@ -3363,7 +3394,7 @@ def parse_multiple_logs(bin_files, output_file, tz_code=None, verbose=False, log
 
             # Parse individual file to LogData
             log_file = LogFile(bin_file, logger=logger)
-            log_data = LogData(log_file, timezone_offset=timezone_offset)
+            log_data = LogData(log_file, timezone_offset=timezone_offset, verbosity_level=verbosity_level)
 
             if merged_log_data is None:
                 # First file becomes the base
@@ -3438,8 +3469,15 @@ def main():
     parser.add_argument('--start', help='Filter entries after this time (e.g., "June 2025", "2025-06-15", "last month")')
     parser.add_argument('--end', help='Filter entries before this time (e.g., "June 2025", "2025-06-15", "last month")')
     parser.add_argument('--start-end', help='Filter entries within this period (e.g., "June 2025" sets both start and end boundaries automatically)')
-    parser.add_argument('-v', '--verbose', help='additional logging')
+    parser.add_argument('-v', '--verbose', action='count', default=1, help='Increase verbosity level (-v, -vv, -vvv for levels 2, 3, 4)')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Quiet mode (verbosity level 0)')
     args = parser.parse_args()
+
+    # Calculate verbosity level
+    if args.quiet:
+        verbosity_level = 0
+    else:
+        verbosity_level = args.verbose
 
     # Handle single vs multiple files
     bin_files = args.bin_files
@@ -3493,13 +3531,13 @@ def main():
         # Single file - use existing behavior
         bin_file = bin_files[0]
         output_file = args.output or default_parsed_output_for(bin_file)
-        parse_log(bin_file, output_file, tz_code=tz_code, verbose=args.verbose, output_format=output_format,
+        parse_log(bin_file, output_file, tz_code=tz_code, verbosity_level=verbosity_level, output_format=output_format,
                   start_time=start_time, end_time=end_time)
     else:
         # Multiple files - use new multi-file parsing
         output_file = args.output or generate_merged_output_name(bin_files, output_format)
         parse_multiple_logs(bin_files, output_file,
-                            tz_code=tz_code, verbose=args.verbose, output_format=output_format,
+                            tz_code=tz_code, verbosity_level=verbosity_level, output_format=output_format,
                             start_time=start_time, end_time=end_time)
 
 
