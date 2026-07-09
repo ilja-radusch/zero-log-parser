@@ -884,257 +884,39 @@ class LogData(object):
         return self.log_version < REV2 or self.log_version >= REV3
 
     def emit_tabular_decoding(self, output_file: str, out_format='tsv', logger=None, start_time=None, end_time=None, unnest=False):
-        file_suffix = '.tsv' if out_format == 'tsv' else '.csv'
-        tabular_output_file = output_file.replace('.txt', file_suffix, 1)
-        field_sep = '\t' if out_format == 'tsv' else CSV_DELIMITER
-        record_sep = os.linesep
-        # Modify headers based on unnest option
-        if unnest:
-            headers = ['entry', 'timestamp', 'log_level', 'message', 'condition_key', 'condition_value', 'uninterpreted']
-        else:
-            headers = ['entry', 'timestamp', 'log_level', 'message', 'conditions', 'uninterpreted']
-
-        if not logger:
-            logger = logger_for_input(self.log_file.file_path)
-
-        # Use cached processed entries with optional time filtering (OPTIMIZED)
-        processed_entries = self._get_processed_entries(start_time, end_time)
-
-        with open(tabular_output_file, 'w', encoding='utf-8') as output:
-            def write_row(values):
-                output.write(field_sep.join(values) + record_sep)
-
-            write_row(headers)
-
-            # Write processed entries
-            for entry in processed_entries:
-                if unnest and entry.structured_data:
-                    # Unnest structured data into multiple rows
-                    for key, value in entry.structured_data.items():
-                        row_values = [
-                            str(entry.entry_number),
-                            entry.timestamp,
-                            entry.log_level,
-                            entry.event,
-                            key,
-                            str(value),
-                            entry.uninterpreted
-                        ]
-                        write_row([print_value_tabular(x) for x in row_values])
-                else:
-                    # Standard single-row format
-                    if unnest:
-                        # For unnest format but no structured data, use empty key/value
-                        row_values = [
-                            str(entry.entry_number),
-                            entry.timestamp,
-                            entry.log_level,
-                            entry.event,
-                            '',  # condition_key
-                            entry.conditions,  # condition_value (original conditions text)
-                            entry.uninterpreted
-                        ]
-                    else:
-                        # Use JSON-encoded structured data in conditions field if available
-                        conditions_output = entry.conditions
-                        if entry.structured_data:
-                            conditions_output = json.dumps(entry.structured_data, separators=(',', ':'))
-
-                        row_values = [
-                            str(entry.entry_number),
-                            entry.timestamp,
-                            entry.log_level,
-                            entry.event,
-                            conditions_output,
-                            entry.uninterpreted
-                        ]
-                    write_row([print_value_tabular(x) for x in row_values])
-
-        logger_for_input(self.log_file.file_path).info('Saved to %s', tabular_output_file)
+        entries = self._get_processed_entries(start_time, end_time)
+        from zero_log_parser.emit import emit_tabular
+        emit_tabular(entries, output_file, log_file=self.log_file,
+                     out_format=out_format,
+                     logger=logger_for_input(self.log_file.file_path),
+                     unnest=unnest)
 
     def emit_json_decoding(self, output_file: str, logger=None, start_time=None, end_time=None):
         """Generate JSON output with structured log entries"""
-        json_output_file = output_file.replace('.txt', '.json', 1)
-
-        if not logger:
-            logger = logger_for_input(self.log_file.file_path)
-
-        # Use cached processed entries with optional time filtering (OPTIMIZED)
-        processed_entries = self._get_processed_entries(start_time, end_time)
-
-        # Prepare the JSON structure
-        json_output = {
-            'metadata': {
-                'source_file': self.log_file.file_path,
-                'log_type': 'MBB' if 'MBB' in self.log_file.file_path or 'Mbb' in self.log_file.file_path else 'BMS',
-                'parser_version': f'zero-log-parser-{PARSER_VERSION}',
-                'generated_at': datetime.now().isoformat(),
-                'timezone': f'UTC{self.timezone_offset/3600:+.1f}' if self.timezone_offset else 'UTC+0.0',
-                'total_entries': len(processed_entries)
-            },
-            'log_info': {
-                'vin': getattr(self, 'vin', 'Unknown'),
-                'serial_number': getattr(self, 'serial_number', 'Unknown'),
-                'initial_date': getattr(self, 'initial_date', 'Unknown'),
-                'model': getattr(self, 'model', 'Unknown'),
-                'firmware_rev': getattr(self, 'firmware_rev', 'Unknown'),
-                'board_rev': getattr(self, 'board_rev', 'Unknown')
-            },
-            'entries': []
+        entries = self._get_processed_entries(start_time, end_time)
+        log_info = {
+            'vin': getattr(self, 'vin', 'Unknown'),
+            'serial_number': getattr(self, 'serial_number', 'Unknown'),
+            'initial_date': getattr(self, 'initial_date', 'Unknown'),
+            'model': getattr(self, 'model', 'Unknown'),
+            'firmware_rev': getattr(self, 'firmware_rev', 'Unknown'),
+            'board_rev': getattr(self, 'board_rev', 'Unknown'),
         }
-
-        # Convert processed entries to JSON format
-        for entry in processed_entries:
-            json_entry = {
-                'entry_number': entry.entry_number,
-                'timestamp': entry.timestamp,
-                'sort_timestamp': entry.sort_timestamp,
-                'log_level': entry.log_level,
-                'event': entry.event,
-                'conditions': entry.conditions if entry.conditions and not entry.structured_data else None,
-                'uninterpreted': entry.uninterpreted if entry.uninterpreted else None,
-                'is_structured_data': entry.has_structured_data,
-                'message_type': entry.message_type
-            }
-
-            # Add structured data if available
-            if entry.structured_data:
-                json_entry['structured_data'] = entry.structured_data
-
-            json_output['entries'].append(json_entry)
-
-        # Write JSON output
-        try:
-            with open(json_output_file, 'w', encoding='utf-8') as f:
-                json.dump(json_output, f, indent=2, ensure_ascii=False)
-            logger.info('Saved to %s', json_output_file)
-        except Exception as e:
-            logger.error(f'Error writing JSON file {json_output_file}: {e}')
-            raise
-
-    @classmethod
-    def output_line_number_field(cls, line: int):
-        return ' {line:05d}'.format(line=line)
-
-    @classmethod
-    def output_time_field(cls, time: str):
-        return '     {time:>19s}'.format(time=time)
+        resolved_logger = logger if logger else logger_for_input(self.log_file.file_path)
+        from zero_log_parser.emit import emit_json
+        emit_json(entries, output_file, log_file=self.log_file,
+                  timezone_offset=self.timezone_offset, log_info=log_info,
+                  logger=resolved_logger)
 
     def emit_zero_compatible_decoding(self, output_file: str, logger=None, start_time=None, end_time=None):
-        with open(output_file, 'w', encoding='utf-8-sig') as f:
-            logger = logger_for_input(self.log_file.file_path)
-
-            def write_line(text=None):
-                f.write(text + '\n' if text else '\n')
-
-            write_line('Zero ' + self.log_file.log_type + ' log')
-            write_line()
-
-            for k, v in self.header_info.items():
-                write_line('{0:18} {1}'.format(k, v))
-
-            # Add timezone information
-            tz_hours = self.timezone_offset / 3600
-            if tz_hours >= 0:
-                tz_str = f'UTC+{tz_hours:.1f}'
-            else:
-                tz_str = f'UTC{tz_hours:.1f}'
-            write_line('{0:18} {1}'.format('Timezone', tz_str))
-            write_line()
-
-            # Use centralized processing
-            processed_entries = self._collect_and_process_entries(logger, start_time, end_time)
-
-            write_line('Printing {0} of {0} log entries..'.format(len(processed_entries)))
-            write_line()
-            write_line(' Entry    Time of Log            Level     Event                      Conditions')
-            f.write(self.header_divider)
-
-            # Track unknown entries for compatibility with original logic
-            unknown_entries = 0
-            unknown = []
-
-            def format_structured_data(structured_data):
-                """Format structured data as readable key-value pairs"""
-                if not structured_data:
-                    return ""
-
-                # Create readable key-value pairs
-                formatted_pairs = []
-                for key, value in structured_data.items():
-                    # Convert snake_case to readable format
-                    readable_key = key.replace('_', ' ').title()
-
-                    # Format value based on type and key patterns
-                    if isinstance(value, str):
-                        formatted_value = value
-                    elif 'percent' in key.lower():
-                        formatted_value = f"{value}%"
-                    elif 'ma' in key.lower():  # Check mA before amps to avoid conflict
-                        formatted_value = f"{value}mA"
-                    elif 'amps' in key.lower() or 'current' in key.lower():
-                        formatted_value = f"{value}A"
-                    elif 'mv' in key.lower():
-                        formatted_value = f"{value}mV"
-                    elif 'volts' in key.lower() or 'voltage' in key.lower():
-                        formatted_value = f"{value}V"
-                    elif 'celsius' in key.lower() or 'temp' in key.lower():
-                        formatted_value = f"{value}°C"
-                    else:
-                        formatted_value = str(value)
-
-                    formatted_pairs.append(f"{readable_key}: {formatted_value}")
-
-                return ", ".join(formatted_pairs)
-
-            # Output processed entries with zero-compatible formatting
-            for entry in processed_entries:
-                line_prefix = (self.output_line_number_field(entry.entry_number)
-                               + self.output_time_field(entry.timestamp)
-                               + f'  {entry.log_level:8}')
-
-                # Determine what to show in conditions field
-                conditions_display = ""
-                if entry.structured_data:
-                    # Format structured data as readable key-value pairs
-                    conditions_display = format_structured_data(entry.structured_data)
-                elif entry.conditions:
-                    conditions_display = entry.conditions
-
-                if conditions_display:
-                    if '???' in conditions_display:
-                        u = conditions_display[0]
-                        unknown_entries += 1
-                        if u not in unknown:
-                            unknown.append(u)
-                        conditions_display = '???'
-                        write_line(
-                            line_prefix + '   {message} {conditions}'.format(
-                                message=entry.event, conditions=conditions_display))
-                    else:
-                        write_line(
-                            line_prefix + '   {message:25}  {conditions}'.format(
-                                message=entry.event, conditions=conditions_display))
-                elif entry.uninterpreted:
-                    # Handle Gen3 format with uninterpreted field
-                    output_line = line_prefix + '   {event} [{uninterpreted}]'.format(
-                        event=entry.event,
-                        uninterpreted=entry.uninterpreted)
-                    if re.match(r'\s+\[', output_line):
-                        raise ValueError()
-                    write_line(output_line)
-                else:
-                    write_line(line_prefix + '   {message}'.format(message=entry.event))
-
-            write_line()
-
-        # Log statistics (compatibility with original logic)
-        if unknown:
-            logger.info('%d unknown entries of types %s',
-                        unknown_entries,
-                        ', '.join(hex(ord(x)) for x in unknown))
-
-        logger.info('Saved to %s', output_file)
+        logger = logger_for_input(self.log_file.file_path)
+        entries = self._collect_and_process_entries(logger, start_time, end_time)
+        from zero_log_parser.emit import emit_zero_compatible
+        emit_zero_compatible(entries, output_file, log_file=self.log_file,
+                             header_info=self.header_info,
+                             timezone_offset=self.timezone_offset,
+                             header_divider=self.header_divider,
+                             logger=logger)
 
     def _get_vin(self):
         """Get VIN from header info, handling various formats"""
