@@ -629,6 +629,32 @@ class Gen2:
                         'conditions': message
                     }
 
+        # BMS firmware banner, e.g. "Rev:48,Build:2024-11-17_141950 993     banka".
+        # Matches the app's "BMS rev N"; the BMS logs this periodically as a debug
+        # string rather than storing it in the file header.
+        if message.startswith('Rev:') and 'Build:' in message:
+            import re
+            m = re.match(r'Rev:(\d+),Build:(\S+)(.*)$', message)
+            if m:
+                rev, build, rest = m.groups()
+                rest = rest.strip()
+                structured_data = {
+                    'firmware_rev': int(rev),
+                    'build_string': build,
+                }
+                num_match = re.search(r'\b(\d+)\b', rest)
+                if num_match:
+                    structured_data['build_number'] = int(num_match.group(1))
+                bank_match = re.search(r'\bbank(\w+)\b', rest)
+                if bank_match:
+                    structured_data['bank'] = bank_match.group(1)
+                return {
+                    'event': 'BMS Firmware Version',
+                    'log_level': log_level or 'INFO',
+                    'structured_data': structured_data,
+                    'conditions': message,
+                }
+
         # For other debug messages, return as normal
         return {
             'event': message,
