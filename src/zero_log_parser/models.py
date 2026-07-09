@@ -251,19 +251,33 @@ class LogData(object):
 
         filtered_entries = []
         for entry in entries:
-            # Use sort_timestamp for filtering if available
-            entry_time = entry.sort_timestamp if entry.sort_timestamp and entry.sort_timestamp > 0 else None
-
-            # Skip entries with invalid timestamps
-            if entry_time is None:
+            # sort_timestamp is a float epoch; skip invalid/zero timestamps.
+            epoch = entry.sort_timestamp if entry.sort_timestamp and entry.sort_timestamp > 0 else None
+            if epoch is None:
                 continue
 
+            # Convert to a timezone-aware datetime so it is comparable with the
+            # datetime start/end boundaries. Mirrors _filter_collected_entries
+            # and _filter_gen3_entries; comparing the raw float against a
+            # datetime raised "'<' not supported between float and datetime".
+            entry_time = datetime.fromtimestamp(epoch)
+            try:
+                _utils = _load_utils()
+                if _utils is not None:
+                    entry_time_tz = _utils.apply_timezone_to_datetime(entry_time, None)  # Use system timezone
+                else:
+                    # Fallback - assume local timezone
+                    entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
+            except Exception:
+                # Last fallback - use naive datetime
+                entry_time_tz = entry_time
+
             # Apply start time filter
-            if start_time and entry_time < start_time:
+            if start_time and entry_time_tz < start_time:
                 continue
 
             # Apply end time filter
-            if end_time and entry_time > end_time:
+            if end_time and entry_time_tz > end_time:
                 continue
 
             filtered_entries.append(entry)
