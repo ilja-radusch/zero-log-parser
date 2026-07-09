@@ -78,6 +78,50 @@ Address    | Length | Contents
 
 ## Compressed Telemetry Format Layout (2025+ firmware)
 
+> **Parser support**: This format is handled as **REV4** (`b2 XX fb`). Files begin
+> with a `0xB2` header whose third byte is `0xFB`; byte `0x01` is the file-header
+> size (`0x75` for MBB, `0x7d` for BMS). Field offsets below were validated against
+> the `atomicdog-gen3` Kaitai specs (`zlog.yml` / `bms-g3.ksy.yml`) upstream and
+> against real DSR/X dumps.
+
+### File header (MBB layout, byte 0x01 == 0x75)
+
+Offset | Length     | Contents
+------ | :--------: | --------
+0x00   | 3          | Magic `0xB2 0x75 0xFB`
+0x03   | 4          | File timestamp (u4, little-endian)
+0x19   | *strz*     | Model code (e.g. `DSRX`)
+0x29   | 17         | VIN (e.g. `538DZAZ81PCN25719`)
+0x65   | 1          | Board revision (u8)
+0x67   | 1          | Firmware revision (u8, e.g. `41`)
+0x6b   | *strz*     | Firmware build id (e.g. `39e9c5ea1`)
+
+*The BMS layout (byte 0x01 == 0x7d) differs and is not yet specified, so the
+parser leaves model / firmware / board fields `Unknown` for BMS telemetry logs.*
+
+### Entry framing (REV4)
+
+The fixed file header is followed by ring-buffer garbage, then `0xB2`-delimited
+entries. The parser skips the header (starting at the first `0xB2` past the
+header size) so the length-stepped walk stays aligned — parsing from offset 0
+would consume the header's own `0xB2` magic as a bogus entry and drift through
+the log, producing empty / single-character "corrupted" entries. Each entry adds
+a 4-byte field and a 2-byte incrementing sequence counter between the timestamp
+and the payload:
+
+Offset | Length     | Contents
+------ | :--------: | --------
+0x00   | 1          | `0xB2` entry header
+0x01   | 1          | Entry length (including header byte)
+0x02   | 1          | Entry type
+0x03   | 4          | Timestamp (u4)
+0x07   | 4          | Field (unknown)
+0x0b   | 2          | Sequence counter (increments per entry)
+0x0d   | *variable* | Payload
+
+*(Relative to the type byte the payload begins at offset `0x0b`, vs `0x05` for
+the ring-buffer format.)*
+
 The 2025+ firmware introduces a significantly different log structure optimized for telemetry collection:
 
 ### Key Changes from Ring Buffer Format:
@@ -414,11 +458,18 @@ Offset | Length | Contents
 0x04   | 1      | error reg
 0x05   | 1+     | error data
 
+The `sevcon error code` is resolved to a human-readable `cause` via the Sevcon
+Gen4 EMCY fault table (sourced from the BorgWarner/Sevcon Gen4 reference as
+compiled in the OVMS project). Mapped codes include `0x4681` Preop, `0x4884`
+Sequence Fault, `0x4981` Throttle Fault, `0x45C9`/`0x45CA` motor low/high
+voltage cutback, `0x5041`-`0x5045` NVM/config faults, `0x5081` invalid steer
+switches, `0x5101` line contactor open circuit, `0x5102` line contactor welded.
+
 ### `0x30` - charger status
 Offset | Length | Contents
 ------ | :----: | --------
-0x00   | 1      | Module type
-0x01   | 1      | Module state
+0x00   | 1      | Charger id: `0x00`=Calex 720W, `0x01`=Calex 1200W, `0x02`=External Chg 0, `0x03`=External Chg 1, `0x06`=SMPC (Cypher/DS 2022+ onboard charger)
+0x01   | 1      | State: `0x00`=Disconnected, `0x01`=Connected
 
 ### `0x31` - MBB BMS Isolation Fault
 Offset | Length | Contents
@@ -526,6 +577,17 @@ Offset | Length | Contents
 0x34   | 2      | cell 26 mV
 0x36   | 2      | cell 27 mV
 0x38   | 2      | cell 28 mV
+
+### `0x48` (Type 72) - Charger Info
+*REV4 telemetry format - onboard/external charger identification*
+
+Offset | Length     | Contents
+------ | :--------: | --------
+0x00   | 10         | Charger name (ASCII, e.g. ` 6kW`)
+0x0a   | *variable* | Bits / floats / hertz / id / version (u2) / serial (u4)
+
+Only the 10-byte name is reliably decoded per the `atomicdog-gen3` Kaitai spec;
+the remaining fields are not fully specified and are preserved as raw hex.
 
 ### `0x51` (Type 81) - Vehicle State Telemetry
 *Added in 2025+ firmware - replaces periodic "Riding" entries*
@@ -662,9 +724,11 @@ Offset | Length     | Contents
    - Other sizes → Legacy Format
 
 2. **Header Pattern Detection**:
+   - Magic `0xB2 XX 0xFB` (byte 0x02 == 0xFB) → Telemetry Format (REV4)
    - Look for section headers (0xa0-0xa3) → Ring Buffer Format
-   - Starts with 0xb2 entries → Compressed Telemetry Format
    - Static data at 0x200+ → Legacy Format
+   - *(Both REV3 ring-buffer and REV4 telemetry logs can start with `0xB2`; the
+     third byte `0xFB` distinguishes REV4.)*
 
 3. **Message Type Indicators**:
    - Presence of Type 81/84/251 → 2025+ firmware

@@ -69,6 +69,11 @@ These fields contain extracted motorcycle information when available:
 | `firmware_rev` | Firmware revision |
 | `board_rev` | Board revision |
 
+For `b2 XX fb` telemetry logs (REV4), `model`, `firmware_rev`, `board_rev` and
+firmware build are recovered from the MBB file header; `serial_number` is not
+located in that header and reports `Unknown`. BMS telemetry logs use a different
+header layout, so those fields stay `Unknown`.
+
 ## Entry Structure
 
 Each log entry follows this structure:
@@ -260,6 +265,21 @@ The parser automatically detects and structures various telemetry data types. Be
 }
 ```
 
+#### Charger Info (REV4 telemetry logs)
+
+**Event:** `Charger Info (6kW)`  
+**Description:** Charger identification in `b2 XX fb` telemetry logs (type `0x48`)  
+**Frequency:** During charging operations
+
+```json
+{
+  "charger_name": "6kW"
+}
+```
+
+Only the charger name is reliably decoded; the remaining bytes are kept as raw
+hex in the `conditions` field.
+
 #### Safety Events
 
 **Event:** `Tipover Detected`  
@@ -288,13 +308,24 @@ The parser automatically detects and structures various telemetry data types. Be
 
 ```json
 {
-  "error_code": "0x1000",
-  "error_register": "0x01",
-  "sevcon_error_code": "0x4884",
-  "data": "00 00 00 C0 02",
-  "cause": "Sequence Fault"
+  "error_code": 4096,
+  "error_code_hex": "0x1000",
+  "sevcon_error_code": 18564,
+  "sevcon_error_code_hex": "0x4884",
+  "error_register": 1,
+  "error_register_hex": "0x01",
+  "additional_data_hex": ["00", "00", "00", "C0", "02"],
+  "additional_data_raw": [0, 0, 0, 192, 2],
+  "cause": "Sequence Fault",
+  "is_known_error": true
 }
 ```
+
+The `cause` is resolved from the Sevcon Gen4 EMCY fault table. In addition to the
+example above, mapped codes include `0x45C9`/`0x45CA` (motor low/high voltage
+cutback), `0x5041`-`0x5045` (NVM/config faults), `0x5101` (line contactor open
+circuit) and `0x5102` (line contactor welded). Unmapped codes report
+`"cause": "Unknown"` with `is_known_error: false`.
 
 ### BMS (Battery Management System) Events
 

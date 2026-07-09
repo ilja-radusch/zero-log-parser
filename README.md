@@ -468,7 +468,7 @@ The parser automatically detects and converts various message types to structure
 - **Consistent CSV Output**: Reliable JSON encoding of structured data
 - **Backward Compatibility**: All existing output formats preserved
 
-**📖 Complete JSON Structure Documentation**: See [JSON_STRUCTURE.md](JSON_STRUCTURE.md) for comprehensive documentation of all structured data formats, including:
+**📖 Complete JSON Structure Documentation**: See [docs/json_structure.md](docs/json_structure.md) for comprehensive documentation of all structured data formats, including:
 - 20 unique structured event types (9 MBB, 11 BMS)
 - Real examples from actual motorcycle logs
 - Field definitions and data types
@@ -574,11 +574,14 @@ The parser supports multiple Zero motorcycle log formats:
 - **MBB Logs**: Main bike board event logs
 - **BMS Logs**: Battery management system logs  
 - **Legacy Format**: Static addresses for older firmware
-- **Ring Buffer Format**: Dynamic format for 2024+ firmware
+- **Ring Buffer Format**: Dynamic 256 KB format for 2024+ firmware
+- **Telemetry Format** (`b2 XX fb`): ~131 KB Gen3 dumps (e.g. DSR/X). Header
+  metadata (model, firmware/board revision, build) and `0xB2`-delimited entries
+  are decoded, including type `0x48` charger info
 
 **Documentation:**
-- **[LOG_STRUCTURE.md](LOG_STRUCTURE.md)**: Binary log file formats and entry types
-- **[JSON_STRUCTURE.md](JSON_STRUCTURE.md)**: JSON output structure with structured data examples
+- **[docs/log_structure.md](docs/log_structure.md)**: Binary log file formats and entry types
+- **[docs/json_structure.md](docs/json_structure.md)**: JSON output structure with structured data examples
 
 ## Contributing
 
