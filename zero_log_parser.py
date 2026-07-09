@@ -1489,6 +1489,27 @@ class Gen2:
         }
 
     @classmethod
+    def charger_info(cls, x):
+        """REV4 telemetry charger info (type 0x48). The 10-byte ASCII name is
+        reliable per the atomicdog-gen3 Kaitai spec; the remaining fields
+        (version/serial/status) are not fully specified upstream, so they are
+        preserved as raw hex rather than guessed."""
+        name = ''
+        try:
+            name = BinaryTools.unpack_str(x, 0x0, count=min(10, len(x))).strip('\x00').strip()
+        except Exception:
+            pass
+        hex_data = ' '.join('0x{:02x}'.format(b) for b in x)
+        result = {
+            'event': 'Charger Info' + (' ({})'.format(name) if name else ''),
+            'conditions': ('Name: {}, Raw: {}'.format(name, hex_data) if name
+                           else 'Raw: {}'.format(hex_data)),
+        }
+        if name:
+            result['structured_data'] = {'charger_name': name}
+        return result
+
+    @classmethod
     def charger_status(cls, x):
         states = {
             0x00: 'Disconnected',
@@ -2047,7 +2068,8 @@ class Gen2:
         }
 
     @classmethod
-    def parse_entry(cls, log_data, address, unhandled, logger, timezone_offset=None, verbosity_level=1):
+    def parse_entry(cls, log_data, address, unhandled, logger, timezone_offset=None, verbosity_level=1,
+                    payload_offset=0x05):
         """
         Parse an individual entry from a LogFile into a human readable form
         """
@@ -2079,7 +2101,9 @@ class Gen2:
         unescaped_block = BinaryTools.unescape_block(log_data[address + 0x2:address + length])
 
         message_type = cls.type_from_block(unescaped_block)
-        message = unescaped_block[0x05:]
+        # payload_offset skips type + timestamp (0x05) plus, for the REV4 telemetry
+        # format, the extra 4-byte field and 2-byte sequence counter (-> 0x0b).
+        message = unescaped_block[payload_offset:]
 
         parsers = {
             # Unknown entry types to be added when defined: type, length, source, example
@@ -2127,6 +2151,7 @@ class Gen2:
             0x3b: cls.precharge_decay_too_steep,
             0x3c: cls.disarmed_status,
             0x3d: cls.battery_contactor_closed,
+            0x48: cls.charger_info,             # Type 72 (REV4 telemetry charger info)
             0x51: cls.vehicle_state_telemetry,  # Type 81
             0x54: cls.sensor_data,              # Type 84
             0xfd: cls.debug_message
@@ -2299,6 +2324,8 @@ REV0 = 0
 REV1 = 1
 REV2 = 2
 REV3 = 3  # Ring buffer format (2024+ firmware)
+REV4 = 4  # "b2 XX fb" telemetry format (Gen3 DSR/X etc.); 0xB2-framed,
+          # 0xF9-terminated header, ~131KB files. See atomicdog-gen3 Kaitai spec.
 
 
 class LogData(object):
@@ -2414,10 +2441,13 @@ class LogData(object):
 
         processed_entries = []
 
-        if self.log_version < REV2 or self.log_version == REV3:
-            # Handle REV0/REV1/REV3 formats - collect and sort entries
+        if self.log_version < REV2 or self.log_version >= REV3:
+            # Handle REV0/REV1/REV3/REV4 formats - collect and sort entries
             collected_entries = []
             read_pos = 0
+            # REV4 entries carry a 4-byte field + 2-byte sequence counter between the
+            # timestamp and the payload, so the message body starts at 0x0b.
+            payload_offset = 0x0b if self.log_version == REV4 else 0x05
 
             if hasattr(self, 'entries_count'):
                 for entry_num in range(self.entries_count):
@@ -2425,7 +2455,8 @@ class LogData(object):
                         (length, entry_payload, unhandled) = Gen2.parse_entry(self.entries, read_pos,
                                                                               0,  # unhandled counter
                                                                               timezone_offset=self.timezone_offset,
-                                                                              logger=logger, verbosity_level=verbosity_level)
+                                                                              logger=logger, verbosity_level=verbosity_level,
+                                                                              payload_offset=payload_offset)
 
                         # Extract timestamp for sorting
                         time_str = entry_payload.get('time', '0')
@@ -2610,6 +2641,57 @@ class LogData(object):
         logger = logger_for_input(self.log_file.file_path)
         sys_info = OrderedDict()
         log_version = REV0
+        raw = log.raw()
+
+        # "b2 XX fb" telemetry format (Gen3 DSR/X and similar). File starts with a
+        # 0xB2 header whose third byte is 0xFB; byte 0x01 is the file-header size
+        # (0x75 for MBB, 0x7d for BMS). Header field offsets validated against the
+        # atomicdog-gen3 Kaitai spec (zlog.yml / bms-g3.ksy.yml).
+        if len(raw) >= 3 and raw[0] == 0xB2 and raw[2] == 0xFB:
+            log_version = REV4
+
+            def _strz(offset, limit=24):
+                try:
+                    value = log.unpack_str(offset, count=limit)
+                    value = value.split('\x00', 1)[0].strip()
+                    if value and BinaryTools.is_printable(value):
+                        return value
+                except Exception:
+                    pass
+                return None
+
+            filename_vin = self.log_file.get_filename_vin()
+            header_vin = _strz(0x29, 17)
+            if header_vin and is_vin(header_vin):
+                sys_info['VIN'] = header_vin
+                if filename_vin and header_vin != filename_vin:
+                    logger.warning("VIN mismatch: header:%s filename:%s",
+                                   header_vin, filename_vin)
+            else:
+                sys_info['VIN'] = filename_vin if filename_vin else 'Unknown'
+
+            sys_info['Serial number'] = 'Unknown'  # not located in this header
+            # Model / firmware / board offsets are only known for the MBB header
+            # layout (byte 0x01 == 0x75). The BMS layout (0x7d) differs and is not
+            # specified upstream, so those fields stay Unknown rather than garbage.
+            if raw[0x01] == 0x75:
+                sys_info['Model'] = _strz(0x19, 12) or 'Unknown'
+                try:
+                    sys_info['Firmware rev.'] = log.unpack('uint8', 0x67)
+                except Exception:
+                    sys_info['Firmware rev.'] = 'Unknown'
+                try:
+                    sys_info['Board rev.'] = log.unpack('uint8', 0x65)
+                except Exception:
+                    sys_info['Board rev.'] = 'Unknown'
+                firmware_build = _strz(0x6b, 12)
+                if firmware_build:
+                    sys_info['Firmware build'] = firmware_build
+            else:
+                sys_info['Model'] = 'Unknown'
+                sys_info['Firmware rev.'] = 'Unknown'
+                sys_info['Board rev.'] = 'Unknown'
+
         if len(sys_info) == 0 and (self.log_file.is_mbb() or self.log_file.is_unknown()):
             # Check for ring buffer format (2024+ firmware) - starts with log entries
             if log.raw()[0] == 0xb2 or (len(log.raw()) == 0x40000 and log.index_of_sequence(b'\xa1\xa1\xa1\xa1')):
@@ -2744,7 +2826,21 @@ class LogData(object):
     def get_entries_and_counts(self, log: LogFile):
         logger = logger_for_input(log.file_path)
         raw_log = log.raw()
-        if self.log_version == REV3:
+        if self.log_version == REV4:
+            # "b2 XX fb" telemetry format: a fixed file header (size at byte 0x01)
+            # is followed by ring-buffer garbage, then 0xB2-framed entries. Skip the
+            # header and start at the first entry marker so the length-stepped walk
+            # stays aligned (parsing from offset 0 would consume the file header's
+            # own 0xB2 magic as a bogus entry and drift through the log).
+            header_size = raw_log[0x01] if len(raw_log) > 1 else 0
+            entries_start = raw_log.find(b'\xb2', header_size)
+            if entries_start < 0:
+                entries_start = 0
+            event_log = raw_log[entries_start:]
+            entries_count = event_log.count(b'\xb2')
+            logger.info('REV4 telemetry log: entries start at 0x%x, %d markers',
+                        entries_start, entries_count)
+        elif self.log_version == REV3:
             # Ring buffer format - entries start at beginning of file
             entries_header_idx = log.index_of_sequence(b'\xa2\xa2\xa2\xa2')
             if entries_header_idx is not None:
@@ -2858,7 +2954,7 @@ class LogData(object):
         '+--------+----------------------+--------------------------+----------------------------------\n'
 
     def has_official_output_reference(self):
-        return self.log_version < REV2 or self.log_version == REV3
+        return self.log_version < REV2 or self.log_version >= REV3
 
     def emit_tabular_decoding(self, output_file: str, out_format='tsv', logger=None, start_time=None, end_time=None, unnest=False):
         file_suffix = '.tsv' if out_format == 'tsv' else '.csv'
@@ -3149,7 +3245,7 @@ class LogData(object):
 
         # For backward compatibility, we need to maintain the original binary/payload format
         # This is a necessary trade-off for the optimization while maintaining compatibility
-        if self.log_version < REV2 or self.log_version == REV3:
+        if self.log_version < REV2 or self.log_version >= REV3:
             # For Gen2 format, we keep the original entries format but note that it's now optimized
             # The actual data is in _processed_entries cache
             self.entries = b'OPTIMIZED_MERGE_DATA'  # Placeholder - actual data in _processed_entries

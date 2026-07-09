@@ -373,3 +373,4 @@ plots/*.html
 
 .idea/
 reviews/
+.claude/
