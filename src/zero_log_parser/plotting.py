@@ -26,7 +26,7 @@ except ImportError:
     class Figure:
         pass
 
-from .core import parse_log, LogData, LogFile, MismatchingVinError
+from .core import LogData, LogFile, MismatchingVinError
 
 
 class ZeroLogPlotter:
@@ -34,18 +34,30 @@ class ZeroLogPlotter:
     
     def __init__(self, input_file: str,
                  start_time: Optional['datetime'] = None, end_time: Optional['datetime'] = None,
-                 tz_code: int | str | None = None):
-        """Initialize plotter with input file (bin or csv) and optional time filters."""
+                 tz_code: int | str | None = None,
+                 log_data: Optional['LogData'] = None):
+        """Initialize plotter with input file (bin or csv) and optional time filters.
+
+        If ``log_data`` is supplied, plotting data is loaded directly from the
+        in-memory ``LogData`` object (bypassing the CSV round-trip) and
+        ``input_file`` is treated only as a display/output base name.
+        """
         if not PLOTLY_AVAILABLE:
             raise ImportError("plotly and pandas are required for plotting. Install with: pip install -e \".[plotting]\"")
-        
+
         self.input_file = input_file
         self.start_time = start_time
         self.end_time = end_time
         self.tz_code = tz_code
         self.data = {}
-        self.file_type = self._detect_file_type()
-        self._load_data()
+
+        if log_data is not None:
+            # Direct in-memory path: no file type, no CSV round-trip.
+            self.file_type = 'logdata'
+            self._load_from_logdata(log_data)
+        else:
+            self.file_type = self._detect_file_type()
+            self._load_data()
 
     @classmethod
     def from_multiple_files(cls, input_files: List[str],
@@ -148,21 +160,15 @@ class ZeroLogPlotter:
                 merged_log_data = sum(log_data_objects)
                 print(f"✓ Force-merged {len(input_files)} files with VIN override")
                 
-            # Convert merged LogData to CSV for plotting
-            temp_csv = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
-            temp_csv.close()
-            
-            print("Converting merged LogData to CSV for plotting...")
-            merged_log_data.emit_tabular_decoding(temp_csv.name, out_format='csv')
-            
-            # Create plotter instance with merged CSV
-            plotter = cls(temp_csv.name, start_time=start_time,
-                          end_time=end_time, tz_code=tz_code)
-            
+            # Plot directly from the merged LogData (no CSV round-trip / temp file)
+            print("Building plot data from merged LogData...")
             # Generate meaningful filename from VIN, log types, and latest date
-            base_name = cls._generate_merged_basename(merged_log_data, temp_csv.name, log_file_types)
-            plotter.input_file = base_name
-            
+            base_name = cls._generate_merged_basename(merged_log_data, log_file_types)
+
+            plotter = cls(base_name, start_time=start_time,
+                          end_time=end_time, tz_code=tz_code,
+                          log_data=merged_log_data)
+
             return plotter
             
         except Exception as e:
@@ -206,27 +212,27 @@ class ZeroLogPlotter:
             # Write merged CSV
             merged_df.to_csv(temp_csv.name, sep=';', index=False)
             
-            # Create plotter instance
+            # Create plotter instance (reads temp CSV during construction)
             plotter = cls(temp_csv.name, start_time=start_time, end_time=end_time)
-            
+
             # Generate meaningful filename from CSV data
             base_name = cls._generate_csv_merged_basename(merged_df, len(csv_files))
             plotter.input_file = base_name
-            
+
             return plotter
-            
-        except Exception as e:
+
+        finally:
+            # Temp CSV has been fully read into the plotter; always clean it up.
             if os.path.exists(temp_csv.name):
                 os.unlink(temp_csv.name)
-            raise
 
     @classmethod
-    def _generate_merged_basename(cls, merged_log_data, csv_file_path: str, log_file_types: set) -> str:
+    def _generate_merged_basename(cls, merged_log_data, log_file_types: set) -> str:
         """Generate meaningful basename from log types, VIN and latest date in merged LogData."""
         try:
             # Generate log type prefix
             log_prefix = cls._generate_log_type_prefix(log_file_types)
-            
+
             # Get VIN from merged LogData
             vin = merged_log_data._get_vin()
             if vin == 'Unknown':
@@ -234,18 +240,34 @@ class ZeroLogPlotter:
             else:
                 # Clean VIN for filename use (remove invalid characters)
                 vin = ''.join(c for c in vin if c.isalnum() or c in '-_')
-            
-            # Find latest date by reading the generated CSV
-            latest_date = cls._extract_latest_date_from_csv(csv_file_path)
-            
+
+            # Find latest date directly from the processed entries
+            latest_date = cls._extract_latest_date_from_logdata(merged_log_data)
+
             if latest_date:
                 return f"{vin}_{log_prefix}_{latest_date}"
             else:
                 return f"{vin}_{log_prefix}_merged"
-                
+
         except Exception as e:
             print(f"Warning: Could not generate VIN-based filename: {e}")
             return "merged_data"
+
+    @classmethod
+    def _extract_latest_date_from_logdata(cls, merged_log_data) -> Optional[str]:
+        """Extract the latest entry date (YYYY-MM-DD) directly from LogData entries."""
+        try:
+            entries = merged_log_data._get_processed_entries()
+            timestamps = pd.to_datetime(
+                [e.timestamp for e in entries], errors='coerce'
+            )
+            valid = timestamps.dropna()
+            if len(valid) == 0:
+                return None
+            return valid.max().strftime('%Y-%m-%d')
+        except Exception as e:
+            print(f"Warning: Could not extract latest date from LogData: {e}")
+            return None
 
     @classmethod
     def _generate_log_type_prefix(cls, log_file_types: set) -> str:
@@ -368,30 +390,6 @@ class ZeroLogPlotter:
             
         return log_types
     
-    @classmethod
-    def _extract_latest_date_from_csv(cls, csv_file_path: str) -> str:
-        """Extract the latest date from a CSV file's timestamp column."""
-        try:
-            # Read just the timestamp column to find latest date
-            df = pd.read_csv(csv_file_path, sep=';', usecols=['timestamp'], nrows=1000)
-            
-            if len(df) == 0:
-                return None
-                
-            # Convert to datetime and find max
-            timestamps = pd.to_datetime(df['timestamp'], errors='coerce')
-            valid_timestamps = timestamps.dropna()
-            
-            if len(valid_timestamps) == 0:
-                return None
-                
-            latest_timestamp = valid_timestamps.max() 
-            return latest_timestamp.strftime('%Y-%m-%d')
-            
-        except Exception as e:
-            print(f"Warning: Could not extract latest date from CSV: {e}")
-            return None
-    
     def _detect_file_type(self) -> str:
         """Detect if input is binary or CSV file."""
         if self.input_file.endswith('.bin'):
@@ -409,30 +407,60 @@ class ZeroLogPlotter:
             self._load_from_csv()
     
     def _load_from_binary(self):
-        """Load data from binary file by converting to CSV first."""
-        # Create temporary CSV file
-        temp_csv = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
-        temp_csv.close()
-        
-        # Parse binary to CSV using the core module
-        try:
-            parse_log(self.input_file, temp_csv.name,
-                      tz_code=self.tz_code, output_format='csv')
-            self.csv_file = temp_csv.name
-            self._load_from_csv()
-        finally:
-            # Clean up temporary file
-            if os.path.exists(temp_csv.name):
-                os.unlink(temp_csv.name)
-    
+        """Load data directly from a binary file via in-memory ProcessedLogEntry objects.
+
+        Decodes the binary once into a ``LogData`` object and builds the plot
+        DataFrame from its ``ProcessedLogEntry`` objects, bypassing the former
+        binary -> CSV -> read_csv -> json.loads round-trip.
+        """
+        from .utils import get_timezone_offset
+        timezone_offset = get_timezone_offset(self.tz_code)
+        log_file = LogFile(self.input_file)
+        log_data = LogData(log_file, timezone_offset)
+        self._load_from_logdata(log_data)
+
+    def _load_from_logdata(self, log_data: 'LogData'):
+        """Load plotting data directly from a LogData object (no CSV round-trip)."""
+        processed_entries = log_data._get_processed_entries()
+        self.df = self._build_dataframe_from_entries(processed_entries)
+        self._finalize_dataframe()
+
+    def _build_dataframe_from_entries(self, processed_entries) -> 'pd.DataFrame':
+        """Build a plot-ready DataFrame directly from ProcessedLogEntry objects.
+
+        Structured telemetry is expanded from ``entry.structured_data`` natively,
+        avoiding JSON serialize/deserialize. Mirrors the columns produced by the
+        CSV path (``entry``, ``timestamp``, ``log_level``, ``message``,
+        ``conditions``, ``uninterpreted`` plus expanded structured fields).
+        """
+        rows = []
+        for entry in processed_entries:
+            row = {
+                'entry': entry.entry_number,
+                'timestamp': entry.timestamp,
+                'log_level': entry.log_level,
+                'message': entry.event,
+                'conditions': entry.conditions,
+                'uninterpreted': entry.uninterpreted,
+            }
+            if entry.structured_data:
+                # Native structured data access - no json.loads required.
+                row.update(entry.structured_data)
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+        if 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        return df
+
     def _load_from_csv(self):
         """Load data from CSV file."""
         csv_file = self.csv_file if hasattr(self, 'csv_file') else self.input_file
         df = pd.read_csv(csv_file, sep=';')
-        
+
         # Parse timestamp column
         df['timestamp'] = pd.to_datetime(df['timestamp'])
-        
+
         # Parse JSON conditions into separate columns
         df_expanded = []
         for _, row in df.iterrows():
@@ -444,24 +472,28 @@ class ZeroLogPlotter:
                 except (json.JSONDecodeError, ValueError):
                     pass
             df_expanded.append(row_dict)
-        
+
         self.df = pd.DataFrame(df_expanded)
-        
+        self._finalize_dataframe()
+
+    def _finalize_dataframe(self):
+        """Apply time filtering and split ``self.df`` into per-message-type views."""
         # Apply time filtering if specified
         if self.start_time or self.end_time:
             from .utils import apply_time_filter
             self.df = apply_time_filter(self.df, self.start_time, self.end_time)
             print(f"Filtered to {len(self.df)} entries")
-        
+
         # Separate by message type for easier access
+        message = self.df['message'] if 'message' in self.df.columns else pd.Series([], dtype=object)
         self.data = {
-            'bms_discharge': self.df[self.df['message'] == 'Discharge level'],
-            'bms_soc': self.df[self.df['message'] == 'SOC Data'],
-            'mbb_riding': self.df[self.df['message'] == 'Riding'],
-            'mbb_disarmed': self.df[self.df['message'] == 'Disarmed'],
-            'mbb_charging': self.df[self.df['message'] == 'Charging'],
-            'charger_charging': self.df[self.df['message'] == 'Charger 6 Charging'],
-            'charger_stopped': self.df[self.df['message'] == 'Charger 6 Stopped'],
+            'bms_discharge': self.df[message == 'Discharge level'],
+            'bms_soc': self.df[message == 'SOC Data'],
+            'mbb_riding': self.df[message == 'Riding'],
+            'mbb_disarmed': self.df[message == 'Disarmed'],
+            'mbb_charging': self.df[message == 'Charging'],
+            'charger_charging': self.df[message == 'Charger 6 Charging'],
+            'charger_stopped': self.df[message == 'Charger 6 Stopped'],
         }
     
     def _insert_gaps_for_temporal_breaks(self, df: pd.DataFrame, gap_threshold_minutes: int = 30):
