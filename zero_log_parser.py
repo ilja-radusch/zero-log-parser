@@ -1433,10 +1433,23 @@ class Gen2:
 
     @classmethod
     def sevcon_status(cls, x):
+        # Sevcon Gen4 CANopen emergency (EMCY) fault codes.
+        # Sourced from the BorgWarner/Sevcon Gen4 fault reference as compiled in the
+        # Open Vehicle Monitoring System project (rt_sevcon_faults.cpp).
         cause = {
-            0x4681: 'Preop',
-            0x4884: 'Sequence Fault',
-            0x4981: 'Throttle Fault',
+            0x4681: 'Preop',                        # Unit in preoperational state
+            0x4884: 'Sequence Fault',               # Drive switch active at power up
+            0x4981: 'Throttle Fault',               # Throttle exceeds 20% at power up
+            0x45C9: 'Motor Low Voltage Cutback',    # Entered low voltage cutback region
+            0x45CA: 'Motor High Voltage Cutback',   # Entered high voltage cutback region
+            0x5041: 'Bad NVM Data',                 # EEPROM/flash config corrupted
+            0x5042: 'VPDO Out Of Range',            # VPDO mapped to invalid object
+            0x5043: 'Static Range Error',           # Config object out of range
+            0x5044: 'Dynamic Range Error',          # Object range depends on another
+            0x5045: 'Auto-configuration Fault',     # Unable to auto-configure I/O
+            0x5081: 'Invalid Steer Switches',       # Steering switches invalid state
+            0x5101: 'Line Contactor Open Circuit',  # Contactor did not close when energized
+            0x5102: 'Line Contactor Welded',        # Contactor closed when de-energized
         }
 
         # Extract binary data once
@@ -1487,6 +1500,7 @@ class Gen2:
             0x01: 'Calex 1200W',
             0x02: 'External Chg 0',
             0x03: 'External Chg 1',
+            0x06: 'SMPC',            # Onboard charger on Cypher/DS 2022+ platforms
         }
 
         # Extract binary data once
@@ -1505,6 +1519,7 @@ class Gen2:
             'is_calex_720w': charger_id == 0x00,
             'is_calex_1200w': charger_id == 0x01,
             'is_external_charger': charger_id in [0x02, 0x03],
+            'is_smpc': charger_id == 0x06,
             'is_known_charger': charger_id in name
         }
 
