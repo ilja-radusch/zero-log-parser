@@ -39,6 +39,7 @@ import os
 import re
 import string
 import struct
+import sys
 from collections import OrderedDict, namedtuple
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -46,11 +47,21 @@ from math import trunc
 from time import gmtime, localtime, strftime
 from typing import Dict, List, Union, Optional
 
-# Parser version - try to import from package, fallback to hardcoded
-try:
-    from src.zero_log_parser import __version__ as PARSER_VERSION
-except ImportError:
-    PARSER_VERSION = "2.2.0"  # Fallback version
+# Ensure the `zero_log_parser` package under src/ is importable when this file
+# is run as a standalone script from any working directory (uninstalled). This
+# lets the imports below resolve to the package rather than re-importing this
+# root file. Inserted at position 0 so the package wins over the root module.
+_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+# Force src/ to the FRONT: when run as a script the repo root (containing this
+# file) is sys.path[0] and would otherwise re-import this root module as the
+# `zero_log_parser` package. Move any pre-existing entry (e.g. from an editable
+# install) ahead of the script directory.
+if _SRC in sys.path:
+    sys.path.remove(_SRC)
+sys.path.insert(0, _SRC)
+
+# Parser version - single-sourced from the package.
+from zero_log_parser import __version__ as PARSER_VERSION
 
 # Localized time format - use system locale preference
 ZERO_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'  # ISO format is more universal
