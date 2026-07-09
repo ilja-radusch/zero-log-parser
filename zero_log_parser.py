@@ -66,13 +66,63 @@ class MismatchingVinError(Exception):
         super().__init__(f"Cannot merge logs with different VINs: '{vin1}' != '{vin2}'")
 
 
-try:
-    from src.zero_log_parser.utils import get_timezone_offset
-except ImportError:
+def _load_utils():
+    """Resolve the zero_log_parser.utils module whether this file runs as an
+    installed package, from the repo root, or as a standalone script from any CWD.
+
+    Returns the utils module, or None if it genuinely cannot be located.
+    """
+    import importlib
+    import importlib.util
+
+    # 1) Installed package (script running as __main__ against an installed pkg).
     try:
-        from zero_log_parser.utils import get_timezone_offset
+        return importlib.import_module('zero_log_parser.utils')
     except ImportError:
         pass
+
+    # 2) Repo-root src/ layout reachable via the `src.` prefix.
+    try:
+        return importlib.import_module('src.zero_log_parser.utils')
+    except ImportError:
+        pass
+
+    # 3) Locate src/zero_log_parser/utils.py next to this file and load by path.
+    utils_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              'src', 'zero_log_parser', 'utils.py')
+    if os.path.exists(utils_path):
+        try:
+            spec = importlib.util.spec_from_file_location('_zlp_utils_fallback', utils_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        except Exception:
+            return None
+
+    return None
+
+
+# Resolve get_timezone_offset through _load_utils() so it works whether this
+# file runs as an installed package, from the repo root, or as a standalone
+# script from any CWD. It is called unconditionally on the core parse path, so
+# provide a graceful local fallback if utils genuinely cannot be located rather
+# than leaving the name undefined (which previously caused a NameError).
+_utils_module = _load_utils()
+if _utils_module is not None and hasattr(_utils_module, 'get_timezone_offset'):
+    get_timezone_offset = _utils_module.get_timezone_offset
+else:
+    def get_timezone_offset(tz_code):
+        """Fallback timezone offset (seconds from UTC) when utils is unavailable."""
+        if isinstance(tz_code, int):
+            return tz_code * 60 * 60
+        if tz_code is not None:
+            try:
+                return int(float(tz_code) * 60 * 60)
+            except (ValueError, TypeError):
+                pass
+        # Default / unresolved string: use local system timezone offset.
+        local_now = datetime.now().astimezone()
+        return int(local_now.utcoffset().total_seconds() or 0)
 
 
 @dataclass
@@ -2552,11 +2602,11 @@ class LogData(object):
 
             # Apply timezone to entry timestamp for comparison
             try:
-                # Try to import timezone utilities
-                try:
-                    from src.zero_log_parser.utils import apply_timezone_to_datetime
-                    entry_time_tz = apply_timezone_to_datetime(entry_time, None)  # Use system timezone
-                except ImportError:
+                # Try to load timezone utilities from wherever they live
+                _utils = _load_utils()
+                if _utils is not None:
+                    entry_time_tz = _utils.apply_timezone_to_datetime(entry_time, None)  # Use system timezone
+                else:
                     # Fallback - assume local timezone
                     entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
             except:
@@ -2585,11 +2635,11 @@ class LogData(object):
 
             # Apply timezone for comparison
             try:
-                # Try to import timezone utilities
-                try:
-                    from src.zero_log_parser.utils import apply_timezone_to_datetime
-                    entry_time_tz = apply_timezone_to_datetime(entry_time, None)  # Use system timezone
-                except ImportError:
+                # Try to load timezone utilities from wherever they live
+                _utils = _load_utils()
+                if _utils is not None:
+                    entry_time_tz = _utils.apply_timezone_to_datetime(entry_time, None)  # Use system timezone
+                else:
                     # Fallback - assume local timezone
                     entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
             except:
@@ -3468,37 +3518,30 @@ def main():
         if args.start or args.end:
             parser.error("--start-end cannot be used with --start or --end")
         try:
-            # Try to import time parsing utilities
-            try:
-                from src.zero_log_parser.utils import parse_time_range
-            except ImportError:
-                # Fallback for standalone script usage
-                def parse_time_range(time_str, tz_code):
-                    # Simple fallback implementation
-                    raise ValueError("Time filtering requires package installation")
-
-            start_time, end_time = parse_time_range(args.start_end, tz_code)
+            # Load time parsing utilities from wherever they live
+            _utils = _load_utils()
+            if _utils is None:
+                raise ValueError("Time filtering requires the zero_log_parser.utils module")
+            start_time, end_time = _utils.parse_time_range(args.start_end, tz_code)
         except Exception as e:
             parser.error(f"Invalid --start-end time specification: {e}")
     else:
         # Handle individual --start and --end parameters
         if args.start:
             try:
-                try:
-                    from src.zero_log_parser.utils import parse_time_filter_start
-                except ImportError:
-                    raise ValueError("Time filtering requires package installation")
-                start_time = parse_time_filter_start(args.start, tz_code)
+                _utils = _load_utils()
+                if _utils is None:
+                    raise ValueError("Time filtering requires the zero_log_parser.utils module")
+                start_time = _utils.parse_time_filter_start(args.start, tz_code)
             except Exception as e:
                 parser.error(f"Invalid --start time specification: {e}")
 
         if args.end:
             try:
-                try:
-                    from src.zero_log_parser.utils import parse_time_filter_end
-                except ImportError:
-                    raise ValueError("Time filtering requires package installation")
-                end_time = parse_time_filter_end(args.end, tz_code)
+                _utils = _load_utils()
+                if _utils is None:
+                    raise ValueError("Time filtering requires the zero_log_parser.utils module")
+                end_time = _utils.parse_time_filter_end(args.end, tz_code)
             except Exception as e:
                 parser.error(f"Invalid --end time specification: {e}")
 
