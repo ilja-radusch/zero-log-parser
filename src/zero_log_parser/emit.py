@@ -187,6 +187,10 @@ def emit_zero_compatible(entries, output_file, *, log_file, header_info, timezon
                 # Format value based on type and key patterns
                 if isinstance(value, str):
                     formatted_value = value
+                elif key.lower().endswith('kmh'):
+                    formatted_value = f"{value} km/h"
+                elif key.lower().endswith('mph'):
+                    formatted_value = f"{value} mph"
                 elif 'percent' in key.lower():
                     formatted_value = f"{value}%"
                 elif 'ma' in key.lower():  # Check mA before amps to avoid conflict

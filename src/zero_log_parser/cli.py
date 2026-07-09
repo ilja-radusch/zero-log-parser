@@ -64,6 +64,19 @@ def create_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument(
+        '--vehicle-config',
+        help="Path to a vehicle config JSON mapping model codes to speed parameters. "
+             "If omitted, auto-discovers ./zero-vehicles.json or ~/.config/zero-log-parser/vehicles.json"
+    )
+
+    parser.add_argument(
+        '--speed-factor',
+        type=float,
+        help="Inline km/h-per-rpm factor for speed amendment (e.g. 0.0284). "
+             "Overrides the vehicle config."
+    )
+
+    parser.add_argument(
         '-v', '--verbose',
         action='count',
         default=1,
@@ -214,7 +227,9 @@ def main() -> int:
                 output_format=args.format,
                 start_time=start_time,
                 end_time=end_time,
-                unnest=args.unnest
+                unnest=args.unnest,
+                vehicle_config=args.vehicle_config,
+                speed_factor=args.speed_factor
             )
         else:
             # Multiple file parsing with merging
@@ -229,9 +244,11 @@ def main() -> int:
                 output_format=args.format,
                 start_time=start_time,
                 end_time=end_time,
-                unnest=args.unnest
+                unnest=args.unnest,
+                vehicle_config=args.vehicle_config,
+                speed_factor=args.speed_factor
             )
-        
+
         logger.info("Parsing completed successfully")
         
         return 0

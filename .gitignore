@@ -364,6 +364,8 @@ tags
 *.bin
 # Exclude sample log files from this rule
 # !log_data/*.bin
+# Keep the tracked vehicle-config example (users copy it to zero-vehicles.json)
+!zero-vehicles.example.json
 
 # CLAUDE.md should not be ignored - it's documentation
 CLAUDE.md

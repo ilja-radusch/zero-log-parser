@@ -201,6 +201,8 @@ class LogData(object):
         self.log_file = log_file
         self.timezone_offset = timezone_offset
         self.verbosity_level = verbosity_level
+        # km/h-per-rpm factor for speed amendment; set later via apply_speed().
+        self.speed_factor = None
         self.log_version, self.header_info = self.get_version_and_header(log_file)
         self.entries_count, self.entries = self.get_entries_and_counts(log_file)
 
@@ -208,6 +210,26 @@ class LogData(object):
         self._processed_entries = None
         self._processing_complete = False
         self._process_entries_eagerly()
+
+    @property
+    def model_code(self):
+        """Vehicle model code from the log header (e.g. 'DS11'), or None."""
+        model = self.header_info.get('Model') if self.header_info else None
+        if not model or model == 'Unknown':
+            return None
+        return model
+
+    def apply_speed(self, factor):
+        """Amend processed entries with speed_kmh/speed_mph from motor_rpm.
+
+        Stores the factor so any later (re)processing also amends, then applies
+        it to the cached entries. No-op for a None/non-positive factor.
+        """
+        from .speed import amend_entries
+        self.speed_factor = factor
+        if factor and self._processed_entries:
+            return amend_entries(self._processed_entries, factor)
+        return 0
 
     def _process_entries_eagerly(self):
         """Process all entries immediately after LogData creation and cache results."""
@@ -439,6 +461,11 @@ class LogData(object):
                     processed_entries.append(processed_entry)
                 except Exception as e:
                     logger.warning(f'Error processing entry {line}: {e}')
+
+        # Amend vehicle speed if a factor was configured (e.g. lazy-path reprocess).
+        if getattr(self, 'speed_factor', None):
+            from .speed import amend_entries
+            amend_entries(processed_entries, self.speed_factor)
 
         return processed_entries
 

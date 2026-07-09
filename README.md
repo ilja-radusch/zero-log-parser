@@ -125,6 +125,11 @@ zero-log-parser log_data/logfile.bin --verbose
 
 # Short alias with time filtering
 zlp log_data/logfile.bin --start-end "last month" -f json -o filtered_data.json
+
+# Vehicle speed amendment: add speed_kmh/speed_mph derived from motor_rpm
+zero-log-parser log_data/logfile.bin --vehicle-config zero-vehicles.json -f json
+zero-log-parser log_data/logfile.bin --speed-factor 0.0284 -f csv  # inline factor
+# See docs/vehicle_config.md for the config format and auto-discovery.
 ```
 
 #### Interactive Plotting

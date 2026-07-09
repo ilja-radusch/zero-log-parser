@@ -1,0 +1,12 @@
+{
+  "default": {
+    "description": "Fallback factor when the model code is unknown or unmatched",
+    "speed_kmh_per_rpm": 0.0284
+  },
+  "DS11": {
+    "description": "Zero DS 2022, standard wheels (empirically calibrated from odometer)",
+    "speed_kmh_per_rpm": 0.0284,
+    "wheel_circumference_m": 2.01,
+    "gear_ratio": 4.31
+  }
+}

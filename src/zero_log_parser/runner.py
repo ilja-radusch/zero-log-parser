@@ -41,7 +41,38 @@ def is_log_file_path(file_path: str):
     return file_path.endswith('.bin')
 
 
-def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None, unnest=False):
+def _resolve_vehicle_config(vehicle_config, logger):
+    """Load an explicit or auto-discovered vehicle config, or return None."""
+    from .speed import load_vehicle_config, discover_config
+    path = vehicle_config
+    if path is None:
+        path = discover_config()
+        if path:
+            logger.info('Using auto-discovered vehicle config: %s', path)
+    if not path:
+        return None
+    try:
+        return load_vehicle_config(path)
+    except Exception as e:
+        logger.warning('Could not load vehicle config %s: %s', path, e)
+        return None
+
+
+def _apply_vehicle_speed(log_data, config, speed_factor, logger):
+    """Resolve a km/h-per-rpm factor and amend the log's entries with speed."""
+    from .speed import resolve_factor
+    factor = resolve_factor(config, log_data.model_code, speed_factor)
+    if not factor:
+        if speed_factor or config:
+            logger.warning('No speed factor resolved (model=%s); speed not amended',
+                           log_data.model_code)
+        return
+    amended = log_data.apply_speed(factor)
+    logger.info('Amended speed for %d entries (factor=%.5f km/h per rpm, model=%s)',
+                amended, factor, log_data.model_code or 'n/a')
+
+
+def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None, unnest=False, vehicle_config=None, speed_factor=None):
     """
     Parse a Zero binary log file into a human readable text file
     """
@@ -57,6 +88,9 @@ def parse_log(bin_file: str, output_file: str, tz_code=None, verbosity_level=1, 
 
     log = LogFile(bin_file)
     log_data = LogData(log, timezone_offset=timezone_offset, verbosity_level=verbosity_level)
+
+    config = _resolve_vehicle_config(vehicle_config, logger)
+    _apply_vehicle_speed(log_data, config, speed_factor, logger)
 
     if output_format.lower() in ['csv', 'tsv']:
         # Generate CSV/TSV output
@@ -108,7 +142,7 @@ def generate_merged_output_name(bin_files, output_format='txt'):
     return filename
 
 
-def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None, unnest=False):
+def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1, verbose=None, logger=None, output_format='txt', start_time=None, end_time=None, unnest=False, vehicle_config=None, speed_factor=None):
     """
     Parse multiple Zero binary log files and merge them intelligently
 
@@ -183,6 +217,10 @@ def parse_multiple_logs(bin_files, output_file, tz_code=None, verbosity_level=1,
         logger.warning('Successfully merged %d out of %d files', successful_files, len(bin_files))
     else:
         logger.info('Successfully merged all %d files', successful_files)
+
+    # Amend vehicle speed on the merged data before emitting.
+    config = _resolve_vehicle_config(vehicle_config, logger)
+    _apply_vehicle_speed(merged_log_data, config, speed_factor, logger)
 
     # Output merged result
     logger.info('Writing merged log to %s', output_file)
