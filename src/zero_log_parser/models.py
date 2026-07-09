@@ -244,6 +244,32 @@ class LogData(object):
 
         return self._processed_entries
 
+    @staticmethod
+    def _entry_time_in_range(entry_time, start_time, end_time):
+        """Return True if naive `entry_time` falls within [start_time, end_time].
+
+        Converts `entry_time` to a timezone-aware datetime so it is comparable
+        with the datetime start/end boundaries (comparing a raw float epoch
+        against a datetime raised "'<' not supported between float and datetime").
+        Shared by all three filter paths.
+        """
+        try:
+            _utils = _load_utils()
+            if _utils is not None:
+                entry_time_tz = _utils.apply_timezone_to_datetime(entry_time, None)  # Use system timezone
+            else:
+                # Fallback - assume local timezone
+                entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
+        except Exception:
+            # Last fallback - use naive datetime
+            entry_time_tz = entry_time
+
+        if start_time and entry_time_tz < start_time:
+            return False
+        if end_time and entry_time_tz > end_time:
+            return False
+        return True
+
     def _filter_processed_entries(self, entries, start_time, end_time):
         """Filter processed entries by time range."""
         if not start_time and not end_time:
@@ -256,31 +282,8 @@ class LogData(object):
             if epoch is None:
                 continue
 
-            # Convert to a timezone-aware datetime so it is comparable with the
-            # datetime start/end boundaries. Mirrors _filter_collected_entries
-            # and _filter_gen3_entries; comparing the raw float against a
-            # datetime raised "'<' not supported between float and datetime".
-            entry_time = datetime.fromtimestamp(epoch)
-            try:
-                _utils = _load_utils()
-                if _utils is not None:
-                    entry_time_tz = _utils.apply_timezone_to_datetime(entry_time, None)  # Use system timezone
-                else:
-                    # Fallback - assume local timezone
-                    entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
-            except Exception:
-                # Last fallback - use naive datetime
-                entry_time_tz = entry_time
-
-            # Apply start time filter
-            if start_time and entry_time_tz < start_time:
-                continue
-
-            # Apply end time filter
-            if end_time and entry_time_tz > end_time:
-                continue
-
-            filtered_entries.append(entry)
+            if self._entry_time_in_range(datetime.fromtimestamp(epoch), start_time, end_time):
+                filtered_entries.append(entry)
 
         return filtered_entries
 
@@ -455,26 +458,8 @@ class LogData(object):
                 filtered_entries.append((sort_timestamp, entry_payload, entry_num))
                 continue
 
-            # Apply timezone to entry timestamp for comparison
-            try:
-                # Try to load timezone utilities from wherever they live
-                _utils = _load_utils()
-                if _utils is not None:
-                    entry_time_tz = _utils.apply_timezone_to_datetime(entry_time, None)  # Use system timezone
-                else:
-                    # Fallback - assume local timezone
-                    entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
-            except:
-                # Last fallback - use naive datetime
-                entry_time_tz = entry_time
-
-            # Apply filters
-            if start_time and entry_time_tz < start_time:
-                continue
-            if end_time and entry_time_tz > end_time:
-                continue
-
-            filtered_entries.append((sort_timestamp, entry_payload, entry_num))
+            if self._entry_time_in_range(entry_time, start_time, end_time):
+                filtered_entries.append((sort_timestamp, entry_payload, entry_num))
 
         return filtered_entries
 
@@ -485,29 +470,8 @@ class LogData(object):
 
         filtered_entries = []
         for timestamp, entry, line in collected_gen3_entries:
-            # Convert timestamp to datetime object
-            entry_time = datetime.fromtimestamp(timestamp)
-
-            # Apply timezone for comparison
-            try:
-                # Try to load timezone utilities from wherever they live
-                _utils = _load_utils()
-                if _utils is not None:
-                    entry_time_tz = _utils.apply_timezone_to_datetime(entry_time, None)  # Use system timezone
-                else:
-                    # Fallback - assume local timezone
-                    entry_time_tz = entry_time.replace(tzinfo=timezone.utc).astimezone()
-            except:
-                # Last fallback - use naive datetime
-                entry_time_tz = entry_time
-
-            # Apply filters
-            if start_time and entry_time_tz < start_time:
-                continue
-            if end_time and entry_time_tz > end_time:
-                continue
-
-            filtered_entries.append((timestamp, entry, line))
+            if self._entry_time_in_range(datetime.fromtimestamp(timestamp), start_time, end_time):
+                filtered_entries.append((timestamp, entry, line))
 
         return filtered_entries
 
