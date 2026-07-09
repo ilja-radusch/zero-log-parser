@@ -66,6 +66,7 @@ from zero_log_parser import __version__ as PARSER_VERSION
 # Constants, binary tools, and value formatters now live in the package.
 from zero_log_parser.constants import (
     ZERO_TIME_FORMAT, MBB_TIMESTAMP_GMT_OFFSET, EMPTY_CSV_VALUE, CSV_DELIMITER,
+    REV0, REV1, REV2, REV3, REV4,
 )
 from zero_log_parser.binary import (
     BinaryTools, is_vin, vin_length, vin_guaranteed_prefix,
@@ -83,62 +84,17 @@ class MismatchingVinError(Exception):
 
 
 def _load_utils():
-    """Resolve the zero_log_parser.utils module whether this file runs as an
-    installed package, from the repo root, or as a standalone script from any CWD.
+    """Return the zero_log_parser.utils module.
 
-    Returns the utils module, or None if it genuinely cannot be located.
+    src/ is guaranteed on sys.path (see the bootstrap at the top of this file),
+    so this is now a plain package import. Retained as a thin wrapper for the
+    existing call sites in LogData and main().
     """
-    import importlib
-    import importlib.util
-
-    # 1) Installed package (script running as __main__ against an installed pkg).
-    try:
-        return importlib.import_module('zero_log_parser.utils')
-    except ImportError:
-        pass
-
-    # 2) Repo-root src/ layout reachable via the `src.` prefix.
-    try:
-        return importlib.import_module('src.zero_log_parser.utils')
-    except ImportError:
-        pass
-
-    # 3) Locate src/zero_log_parser/utils.py next to this file and load by path.
-    utils_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              'src', 'zero_log_parser', 'utils.py')
-    if os.path.exists(utils_path):
-        try:
-            spec = importlib.util.spec_from_file_location('_zlp_utils_fallback', utils_path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod
-        except Exception:
-            return None
-
-    return None
+    import zero_log_parser.utils as _u
+    return _u
 
 
-# Resolve get_timezone_offset through _load_utils() so it works whether this
-# file runs as an installed package, from the repo root, or as a standalone
-# script from any CWD. It is called unconditionally on the core parse path, so
-# provide a graceful local fallback if utils genuinely cannot be located rather
-# than leaving the name undefined (which previously caused a NameError).
-_utils_module = _load_utils()
-if _utils_module is not None and hasattr(_utils_module, 'get_timezone_offset'):
-    get_timezone_offset = _utils_module.get_timezone_offset
-else:
-    def get_timezone_offset(tz_code):
-        """Fallback timezone offset (seconds from UTC) when utils is unavailable."""
-        if isinstance(tz_code, int):
-            return tz_code * 60 * 60
-        if tz_code is not None:
-            try:
-                return int(float(tz_code) * 60 * 60)
-            except (ValueError, TypeError):
-                pass
-        # Default / unresolved string: use local system timezone offset.
-        local_now = datetime.now().astimezone()
-        return int(local_now.utcoffset().total_seconds() or 0)
+from zero_log_parser.utils import get_timezone_offset
 
 
 @dataclass
@@ -2148,14 +2104,6 @@ class Gen3:
 
         return cls.Entry(improved_event, event_timestamp, improved_conditions,
                          display_bytes_hex(data_payload) if data_payload else '', log_level, message_type)
-
-
-REV0 = 0
-REV1 = 1
-REV2 = 2
-REV3 = 3  # Ring buffer format (2024+ firmware)
-REV4 = 4  # "b2 XX fb" telemetry format (Gen3 DSR/X etc.); 0xB2-framed,
-          # 0xF9-terminated header, ~131KB files. See atomicdog-gen3 Kaitai spec.
 
 
 class LogData(object):
