@@ -467,6 +467,34 @@ The parser automatically detects and converts various message types to structure
 - **Enhanced TXT Formatting**: Smart unit detection and readable key formatting
 - **Consistent CSV Output**: Reliable JSON encoding of structured data
 - **Backward Compatibility**: All existing output formats preserved
+- **Modular package layout**: The former ~3,600-line monolith is split into focused
+  modules under `src/zero_log_parser/` — `constants`, `binary`, `parsing`, `gen2`,
+  `gen3`, `emit`, `models`, `runner`, with `core` re-exporting the public API. The
+  root `zero_log_parser.py` is now a thin, import-inert entry shim.
+
+### Package layout
+
+```
+zero_log_parser.py          # standalone entry shim (bootstraps sys.path, runs the CLI)
+src/zero_log_parser/
+  constants.py   # format revisions, time/CSV constants
+  binary.py      # BinaryTools, value converters/formatters, is_vin
+  parsing.py     # message improvement + log-level classification
+  gen2.py        # Gen2 parser          gen3.py    # Gen3 parser
+  emit.py        # tabular / JSON / Zero-compatible emitters
+  models.py      # LogFile, LogData, ProcessedLogEntry, errors
+  runner.py      # parse_log / parse_multiple_logs orchestration
+  core.py        # public API facade      cli.py / plot_cli.py / plotting.py / utils.py
+```
+
+The parser runs identically in three ways: the installed console scripts
+(`zero-log-parser`, `zlp`, `zero-plotting`), `python zero_log_parser.py <file>` from
+any directory, or `from zero_log_parser import LogData, parse_log` after installation.
+
+> **Note (src layout):** to use the Python API (`import zero_log_parser`), install the
+> package (`pip install -e .`). Importing it from an uninstalled repo-root working
+> directory resolves the entry shim instead of the package; this is standard
+> src-layout behavior and does not affect the CLIs.
 
 **📖 Complete JSON Structure Documentation**: See [docs/json_structure.md](docs/json_structure.md) for comprehensive documentation of all structured data formats, including:
 - 20 unique structured event types (9 MBB, 11 BMS)

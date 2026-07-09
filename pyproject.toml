@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zero-log-parser"
-version = "2.3.0-dev"
+dynamic = ["version"]
 description = "A modern parser for Zero Motorcycle log files with structured data extraction"
 readme = "README.md"
 license = {text = "MIT"}
@@ -63,6 +63,9 @@ Documentation = "https://github.com/ilja-radusch/zero-log-parser/blob/main/READM
 zero-log-parser = "zero_log_parser.cli:main"
 zlp = "zero_log_parser.cli:main"
 zero-plotting = "zero_log_parser.plot_cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "zero_log_parser.__version__"}
 
 [tool.setuptools]
 package-dir = {"" = "src"}
