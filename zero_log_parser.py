@@ -2601,49 +2601,64 @@ class LogData(object):
                 # Ring buffer format detected
                 log_version = REV3  # New revision for ring buffer format
                 filename_vin = self.log_file.get_filename_vin()
-                sys_info['VIN'] = filename_vin if filename_vin else 'Unknown'
-
-                # Look for serial number - it's located 0x302 bytes after first run date header
-                serial_found = False
                 first_run_idx = log.index_of_sequence(b'\xa1\xa1\xa1\xa1')
-                if first_run_idx:
-                    serial_offset = first_run_idx + 0x302
+
+                # System info block sits at fixed offsets relative to the first-run
+                # date header (0xa1a1a1a1). Observed on 2026 Cypher II MBB dumps:
+                #   +0x1ea  serial number  (e.g. "RKT212300208")
+                #   +0x22c  VIN            (17 chars, occasionally 'i'-prefixed)
+                #   +0x246  model code     (e.g. "DS11")
+                def _read_field(offset, count):
                     try:
-                        if serial_offset + 15 < len(log.raw()):
-                            potential_serial = log.unpack_str(serial_offset, count=15).strip('\x00')
-                            if potential_serial and len(potential_serial) >= 8 and potential_serial.isalnum():
-                                sys_info['Serial number'] = potential_serial
-                                serial_found = True
-                    except:
+                        if offset is not None and 0 <= offset and offset + count <= len(log.raw()):
+                            value = log.unpack_str(offset, count=count).strip('\x00').strip()
+                            if value and BinaryTools.is_printable(value):
+                                return value
+                    except Exception:
                         pass
+                    return None
 
-                # Fallback: search near section headers if pattern-based approach didn't work
-                if not serial_found:
-                    for search_offset in [0x3bd10, 0x3bd00, 0x3bd20]:
-                        try:
-                            if search_offset + 15 < len(log.raw()):
-                                potential_serial = log.unpack_str(search_offset, count=15).strip('\x00')
-                                if potential_serial and len(potential_serial) >= 8 and potential_serial.isalnum():
-                                    sys_info['Serial number'] = potential_serial
-                                    serial_found = True
-                                    break
-                        except:
-                            pass
-
-                if not serial_found:
-                    sys_info['Serial number'] = 'Unknown'
-
-                # Look for first run date
-                first_run_idx = log.index_of_sequence(b'\xa1\xa1\xa1\xa1')
+                # VIN: prefer the copy embedded in the header, validate, fall back
+                # to the filename and warn on any mismatch.
+                header_vin = None
                 if first_run_idx:
-                    try:
-                        sys_info['Initial date'] = log.unpack_str(first_run_idx + 4, count=20).strip('\x00')
-                    except:
-                        sys_info['Initial date'] = 'Unknown'
+                    header_vin = _read_field(first_run_idx + 0x22c, 17)
+                    if header_vin and not is_vin(header_vin):
+                        # Some dumps prefix the VIN with a stray byte (e.g. 'i').
+                        header_vin = _read_field(first_run_idx + 0x22d, 17)
+                if header_vin and is_vin(header_vin):
+                    sys_info['VIN'] = header_vin
+                    if filename_vin and header_vin != filename_vin:
+                        logger.warning("VIN mismatch: header:%s filename:%s",
+                                       header_vin, filename_vin)
                 else:
-                    sys_info['Initial date'] = 'Unknown'
+                    sys_info['VIN'] = filename_vin if filename_vin else 'Unknown'
 
-                sys_info['Model'] = 'Unknown'  # Model not found in ring buffer format
+                # Serial number: fixed offset from the header, then legacy fallbacks.
+                serial = None
+                if first_run_idx:
+                    serial = _read_field(first_run_idx + 0x1ea, 15)
+                    if serial and (len(serial) < 8 or not serial.isalnum()):
+                        serial = None
+                    if serial is None:
+                        legacy = _read_field(first_run_idx + 0x302, 15)
+                        if legacy and len(legacy) >= 8 and legacy.isalnum():
+                            serial = legacy
+                if serial is None:
+                    for search_offset in [0x3bd10, 0x3bd00, 0x3bd20]:
+                        candidate = _read_field(search_offset, 15)
+                        if candidate and len(candidate) >= 8 and candidate.isalnum():
+                            serial = candidate
+                            break
+                sys_info['Serial number'] = serial if serial else 'Unknown'
+
+                # First run date
+                initial_date = _read_field(first_run_idx + 4, 20) if first_run_idx else None
+                sys_info['Initial date'] = initial_date if initial_date else 'Unknown'
+
+                # Model code (e.g. "DS11"); firmware/board rev not yet located here.
+                model = _read_field(first_run_idx + 0x246, 4) if first_run_idx else None
+                sys_info['Model'] = model if model else 'Unknown'
                 sys_info['Firmware rev.'] = 'Unknown'
                 sys_info['Board rev.'] = 'Unknown'
 
