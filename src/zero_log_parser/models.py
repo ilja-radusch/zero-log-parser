@@ -591,10 +591,22 @@ class LogData(object):
                 initial_date = _read_field(first_run_idx + 4, 20) if first_run_idx else None
                 sys_info['Initial date'] = initial_date if initial_date else 'Unknown'
 
-                # Model code (e.g. "DS11"); firmware/board rev not yet located here.
+                # Model code (e.g. "DS11") at +0x246. The MBB firmware revision is a
+                # uint16 stored 6 bytes earlier (+0x240, matches the app's "MBB rev N");
+                # board rev not yet located in this header.
                 model = _read_field(first_run_idx + 0x246, 4) if first_run_idx else None
                 sys_info['Model'] = model if model else 'Unknown'
-                sys_info['Firmware rev.'] = 'Unknown'
+                firmware_rev = None
+                if first_run_idx:
+                    rev_offset = first_run_idx + 0x240
+                    if rev_offset + 2 <= len(log.raw()):
+                        try:
+                            candidate = log.unpack('uint16', rev_offset)
+                            if 0 < candidate < 10000:
+                                firmware_rev = candidate
+                        except Exception:
+                            pass
+                sys_info['Firmware rev.'] = firmware_rev if firmware_rev is not None else 'Unknown'
                 sys_info['Board rev.'] = 'Unknown'
 
             else:
