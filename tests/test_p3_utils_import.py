@@ -89,17 +89,39 @@ def test_get_timezone_offset_resolves_from_foreign_cwd(tmp_path):
     assert "NameError" not in combined, combined
 
 
-def test_load_utils_returns_module_with_all_functions():
-    """`_load_utils()` must return a module exposing all four helpers."""
+def test_standalone_script_is_import_inert():
+    """The root script is now a thin entry shim: importing it must have no side
+    effects and must NOT redefine package logic. The old 3-tier `_load_utils`
+    fallback and the parsing functions have moved into the package."""
     mod = _load_script_module()
-    assert hasattr(mod, "_load_utils"), "expected module-level _load_utils helper"
-    utils = mod._load_utils()
-    assert utils is not None, "_load_utils() returned None"
-    for name in (
-        "parse_time_range",
-        "parse_time_filter_start",
-        "parse_time_filter_end",
-        "apply_timezone_to_datetime",
-        "get_timezone_offset",
-    ):
-        assert hasattr(utils, name), f"utils module missing {name}"
+    assert not hasattr(mod, "_load_utils"), "shim must not carry the old _load_utils fallback"
+    assert not hasattr(mod, "parse_log"), "parse logic must live in the package, not the shim"
+
+
+def test_utils_helpers_available_via_package(tmp_path):
+    """From a foreign cwd (installed package, no repo-root shadowing of the entry
+    shim), the four time/timezone helpers are reachable as a normal package
+    import -- the robustness guarantee for all three run environments.
+
+    Run in a subprocess from a non-repo cwd so `import zero_log_parser` resolves
+    to the installed package, not the root entry shim.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    code = (
+        "import zero_log_parser.utils as u\n"
+        "names = ['parse_time_range', 'parse_time_filter_start',\n"
+        "         'parse_time_filter_end', 'apply_timezone_to_datetime',\n"
+        "         'get_timezone_offset']\n"
+        "missing = [n for n in names if not hasattr(u, n)]\n"
+        "assert not missing, missing\n"
+        "print('OK')\n"
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OK" in r.stdout
