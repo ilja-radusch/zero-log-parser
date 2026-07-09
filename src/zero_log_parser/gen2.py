@@ -1,6 +1,5 @@
 """Gen2 log entry parser."""
 
-import re
 import string
 from math import trunc
 from time import gmtime, strftime
@@ -13,7 +12,7 @@ from .binary import (
     display_bytes_hex,
     hex_of_value,
 )
-from .constants import REV4, ZERO_TIME_FORMAT
+from .constants import ZERO_TIME_FORMAT
 from .parsing import determine_log_level, improve_message_parsing
 
 

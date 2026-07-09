@@ -7,13 +7,12 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Union
+from typing import Optional
 
 from .binary import BinaryTools, is_vin, vin_guaranteed_prefix, vin_length
 from .constants import REV0, REV1, REV2, REV3, REV4, ZERO_TIME_FORMAT
 from .gen2 import Gen2
 from .gen3 import Gen3
-from .utils import get_timezone_offset
 
 
 def logger_for_input(bin_file):
