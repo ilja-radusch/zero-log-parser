@@ -2968,7 +2968,7 @@ class LogData(object):
         return '     {time:>19s}'.format(time=time)
 
     def emit_zero_compatible_decoding(self, output_file: str, logger=None, start_time=None, end_time=None):
-        with codecs.open(output_file, 'wb', 'utf-8-sig') as f:
+        with open(output_file, 'w', encoding='utf-8-sig') as f:
             logger = logger_for_input(self.log_file.file_path)
 
             def write_line(text=None):
